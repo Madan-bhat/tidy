@@ -368,8 +368,11 @@ pub fn semantic_scores(query: &str, subjects: &[SubjectDef]) -> Option<HashMap<S
 
 /// Semantic-only pass for many leftovers at once (one worker round-trip per chunk).
 /// Conservative: needs a real cosine signal and a margin over the runner-up.
-pub fn classify_batch(queries: &[String], subjects: &[SubjectDef]) -> Vec<Option<String>> {
-    let mut out: Vec<Option<String>> = vec![None; queries.len()];
+pub fn classify_batch(
+    queries: &[String],
+    subjects: &[SubjectDef],
+) -> Vec<Option<(String, f64)>> {
+    let mut out: Vec<Option<(String, f64)>> = vec![None; queries.len()];
     if queries.is_empty() || !embeddings_wanted() {
         return out;
     }
@@ -403,7 +406,7 @@ pub fn classify_batch(queries: &[String], subjects: &[SubjectDef]) -> Vec<Option
             };
             let second = ranked.get(1).map(|r| r.1).unwrap_or(0.0);
             if *top_cos >= 0.30 && *top_cos - second >= 0.05 {
-                out[chunk_idx * 48 + i] = Some((*top).clone());
+                out[chunk_idx * 48 + i] = Some(((*top).clone(), *top_cos));
             }
         }
     }

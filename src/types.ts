@@ -40,6 +40,10 @@ export interface PreviewItem {
   /** Present when re-sorting files already under the destination. */
   fromSubject?: string | null;
   fromFileType?: string | null;
+  /** Why Tidy picked this subject. */
+  reason?: string;
+  /** "high" | "medium" | "low" | "none" */
+  confidence?: string;
 }
 
 export interface TypeRule {

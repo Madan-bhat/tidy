@@ -56,6 +56,15 @@ pub fn load() -> AppConfig {
     }
 }
 
+/// Config as the classifier should see it: the user's subjects plus anything
+/// learned from corrections (kept in memory; never written to config.json).
+pub fn load_effective() -> AppConfig {
+    let mut cfg = load();
+    crate::learned::apply(&mut cfg.subjects);
+    crate::classify_subject::enrich_all(&mut cfg.subjects);
+    cfg
+}
+
 /// Older configs only had `enabledSubjects` maps — rebuild a subject list if needed.
 fn migrate_legacy(raw: Option<&str>) -> Option<AppConfig> {
     #[derive(Deserialize)]

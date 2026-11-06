@@ -2,9 +2,11 @@ mod classify_embed;
 mod classify_subject;
 mod classify_type;
 mod config;
+pub mod eval;
 mod extract;
 mod history;
 mod import_parse;
+mod learned;
 mod mover;
 mod organize_existing;
 mod pending;
@@ -170,7 +172,7 @@ fn confirm_proposed_subjects(
 #[tauri::command]
 async fn preview_existing(app: AppHandle) -> Result<Vec<PreviewItem>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let cfg = config::load();
+        let cfg = config::load_effective();
         organize_existing::preview(&app, &cfg)
     })
     .await
@@ -180,7 +182,7 @@ async fn preview_existing(app: AppHandle) -> Result<Vec<PreviewItem>, String> {
 #[tauri::command]
 async fn preview_reorganize(app: AppHandle) -> Result<Vec<PreviewItem>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let cfg = config::load();
+        let cfg = config::load_effective();
         organize_existing::preview_reorganize(&app, &cfg)
     })
     .await
@@ -194,11 +196,55 @@ async fn apply_existing(
     subjects: Option<std::collections::HashMap<String, String>>,
 ) -> Result<Vec<MoveRecord>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let cfg = config::load();
+        let cfg = config::load_effective();
         organize_existing::apply(&app, &cfg, &sources, &subjects.unwrap_or_default())
     })
     .await
     .map_err(|e| format!("Apply failed: {e}"))?
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct Correction {
+    source: String,
+    subject: String,
+}
+
+/// The user moved files to a different subject than Tidy suggested — remember why.
+#[tauri::command]
+async fn record_corrections(items: Vec<Correction>) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut learned_terms = 0;
+        for item in items {
+            let path = std::path::Path::new(&item.source);
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let text = if extract::can_extract(path) {
+                extract::extract_text(path)
+            } else {
+                None
+            };
+            learned_terms += learned::learn(&item.subject, &stem, text.as_deref());
+        }
+        learned_terms
+    })
+    .await
+    .map_err(|e| format!("Could not record corrections: {e}"))
+}
+
+#[tauri::command]
+fn learned_counts() -> std::collections::HashMap<String, usize> {
+    learned::counts()
+}
+
+#[tauri::command]
+fn forget_learned(subject: Option<String>) {
+    match subject {
+        Some(s) => learned::forget(&s),
+        None => learned::forget_all(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -306,6 +352,7 @@ fn delete_subject(name: String) -> Result<AppConfig, String> {
     if cfg.subjects.len() == before {
         return Err("Subject not found".into());
     }
+    learned::forget(&name);
     config::save(&cfg)?;
     Ok(cfg)
 }
@@ -370,6 +417,9 @@ pub fn run() {
             preview_existing,
             preview_reorganize,
             apply_existing,
+            record_corrections,
+            learned_counts,
+            forget_learned,
             get_rules,
             set_subject_enabled,
             upsert_subject,

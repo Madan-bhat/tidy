@@ -14,6 +14,10 @@ pub struct PlannedMove {
     pub subject: String,
     pub file_type: String,
     pub filename: String,
+    /// Why this subject was chosen (shown in the preview).
+    pub reason: String,
+    /// "high" | "medium" | "low" | "none"
+    pub confidence: String,
 }
 
 #[allow(dead_code)]
@@ -53,14 +57,15 @@ pub fn plan_move_with_index(
         .ok_or("Invalid filename")?
         .to_string();
 
-    let subject = classify_subject::classify_with_index(
+    let verdict = classify_subject::classify_detailed(
         path,
         index,
         &config.subjects,
         allow_extract,
         allow_embed,
     );
-    build_plan(path, dest_root, filename, subject)
+    let confidence = verdict.confidence_str().to_string();
+    build_plan(path, dest_root, filename, verdict.subject, verdict.reason, confidence)
 }
 
 /// Plan a move into an already-decided subject (preview result, semantic pass).
@@ -81,7 +86,14 @@ pub fn plan_move_to_subject(
         .and_then(|n| n.to_str())
         .ok_or("Invalid filename")?
         .to_string();
-    build_plan(path, dest_root, filename, subject.to_string())
+    build_plan(
+        path,
+        dest_root,
+        filename,
+        subject.to_string(),
+        "Chosen by you".to_string(),
+        "high".to_string(),
+    )
 }
 
 fn build_plan(
@@ -89,6 +101,8 @@ fn build_plan(
     dest_root: &str,
     filename: String,
     subject: String,
+    reason: String,
+    confidence: String,
 ) -> Result<PlannedMove, String> {
     let file_type = classify_type::classify_type(path).to_string();
     let target_dir = PathBuf::from(dest_root).join(&subject).join(&file_type);
@@ -100,6 +114,8 @@ fn build_plan(
         subject,
         file_type,
         filename,
+        reason,
+        confidence,
     })
 }
 

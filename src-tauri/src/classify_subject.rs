@@ -356,11 +356,54 @@ impl SubjectIndex {
         scores
     }
 
+    /// Which of the subject's own phrases / terms the text actually contains
+    /// (shown to the user as "why").
+    pub fn evidence(&self, text: &str, subject: &str) -> Vec<String> {
+        let Some(doc) = self.docs.iter().find(|d| d.name == subject) else {
+            return Vec::new();
+        };
+        let haystack = normalize(text);
+        let mut out: Vec<String> = Vec::new();
+        for phrase in &doc.phrases {
+            if phrase.contains(' ')
+                && haystack.contains(phrase.as_str())
+                && doc
+                    .rarity
+                    .get(phrase.split_whitespace().next().unwrap_or(""))
+                    .copied()
+                    .unwrap_or(1.0)
+                    >= 0.2
+                && !out.iter().any(|o| o.contains(phrase.as_str()))
+            {
+                out.push(phrase.clone());
+                if out.len() >= 2 {
+                    break;
+                }
+            }
+        }
+        for token in tokenize_query(&haystack, &self.dict) {
+            if out.len() >= 4 {
+                break;
+            }
+            let distinctive = token.len() >= 3
+                && doc.rarity.get(&token).copied().unwrap_or(0.0) >= 0.45;
+            if doc.tf.contains_key(&token)
+                && distinctive
+                && !out.iter().any(|o| o.split_whitespace().any(|w| w == token))
+                && !out.contains(&token)
+            {
+                out.push(token);
+            }
+        }
+        out
+    }
+
     pub fn best(&self, scores: &HashMap<String, f64>) -> Option<String> {
         best_subject(scores)
     }
 }
 
+#[allow(dead_code)]
 pub fn classify_subject_opts(
     path: &Path,
     subjects: &[SubjectDef],
@@ -370,6 +413,40 @@ pub fn classify_subject_opts(
     classify_with_index(path, &index, subjects, allow_extract, true)
 }
 
+/// How sure we are about a match. Drives the preview's default selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Confidence {
+    High,
+    Medium,
+    Low,
+}
+
+impl Confidence {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Confidence::High => "high",
+            Confidence::Medium => "medium",
+            Confidence::Low => "low",
+        }
+    }
+}
+
+/// A classification plus the human-readable evidence behind it.
+#[derive(Debug, Clone)]
+pub struct Verdict {
+    pub subject: String,
+    /// `None` when nothing matched (General).
+    pub confidence: Option<Confidence>,
+    pub reason: String,
+}
+
+impl Verdict {
+    pub fn confidence_str(&self) -> &'static str {
+        self.confidence.map(Confidence::as_str).unwrap_or("none")
+    }
+}
+
+#[allow(dead_code)]
 pub fn classify_with_index(
     path: &Path,
     index: &SubjectIndex,
@@ -377,6 +454,17 @@ pub fn classify_with_index(
     allow_extract: bool,
     allow_embed: bool,
 ) -> String {
+    classify_detailed(path, index, subjects, allow_extract, allow_embed).subject
+}
+
+/// Same ranking as [`classify_with_index`], but says how and how sure.
+pub fn classify_detailed(
+    path: &Path,
+    index: &SubjectIndex,
+    subjects: &[SubjectDef],
+    allow_extract: bool,
+    allow_embed: bool,
+) -> Verdict {
     let raw_name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -389,8 +477,13 @@ pub fn classify_with_index(
 
     let mut scores = index.score_text(stem);
 
-    if let Some(subject) = decide(index, subjects, stem, &scores, allow_embed) {
-        return subject;
+    if let Some(d) = decide(index, subjects, stem, &scores, allow_embed) {
+        let reason = explain(index, "Filename", stem, &d);
+        return Verdict {
+            subject: d.subject,
+            confidence: Some(d.confidence),
+            reason,
+        };
     }
 
     // Filename ambiguous — only then pay for document text extraction.
@@ -402,13 +495,48 @@ pub fn classify_with_index(
                 *scores.entry(name).or_insert(0.0) += pts * 0.85;
             }
             let query = format!("{stem} {}", sample.chars().take(400).collect::<String>());
-            if let Some(subject) = decide(index, subjects, &query, &scores, allow_embed) {
-                return subject;
+            if let Some(d) = decide(index, subjects, &query, &scores, allow_embed) {
+                let probe = format!("{stem} {sample}");
+                let reason = explain(index, "Document text", &probe, &d);
+                return Verdict {
+                    subject: d.subject,
+                    confidence: Some(d.confidence),
+                    reason,
+                };
             }
         }
     }
 
-    "General".to_string()
+    Verdict {
+        subject: "General".to_string(),
+        confidence: None,
+        reason: "No subject matched the name or contents".to_string(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Basis {
+    Lexical,
+    Semantic,
+}
+
+struct Decision {
+    subject: String,
+    confidence: Confidence,
+    basis: Basis,
+}
+
+fn explain(index: &SubjectIndex, source: &str, text: &str, d: &Decision) -> String {
+    if d.basis == Basis::Semantic {
+        return format!("{source} is close in meaning to this subject");
+    }
+    let hits = index.evidence(text, &d.subject);
+    if hits.is_empty() {
+        format!("{source} resembles this subject")
+    } else {
+        let quoted: Vec<String> = hits.iter().map(|h| format!("\u{201c}{h}\u{201d}")).collect();
+        format!("{source} matches {}", quoted.join(", "))
+    }
 }
 
 /// Clear BM25 win → take it. Thin margin / miss → try MiniLM hybrid.
@@ -418,7 +546,7 @@ fn decide(
     query: &str,
     scores: &HashMap<String, f64>,
     allow_embed: bool,
-) -> Option<String> {
+) -> Option<Decision> {
     let mut ranked: Vec<_> = scores.iter().collect();
     ranked.sort_by(|a, b| {
         b.1.partial_cmp(a.1)
@@ -427,27 +555,105 @@ fn decide(
     });
 
     let clear_margin = MIN_MARGIN * 2.2;
+    let fused = |scores: &HashMap<String, f64>| {
+        crate::classify_embed::fuse_with_bm25(query, scores, subjects).map(|subject| Decision {
+            subject,
+            confidence: Confidence::Medium,
+            basis: Basis::Semantic,
+        })
+    };
+
     if let Some((top_name, top_score)) = ranked.first() {
         let second = ranked.get(1).map(|(_, s)| **s).unwrap_or(0.0);
         if **top_score >= MIN_SCORE && **top_score - second >= clear_margin {
-            return Some((*top_name).clone());
+            let confidence = if **top_score >= MIN_SCORE * 1.6 {
+                Confidence::High
+            } else {
+                Confidence::Medium
+            };
+            return Some(Decision {
+                subject: (*top_name).clone(),
+                confidence,
+                basis: Basis::Lexical,
+            });
         }
         // Lexical winner exists but is close / weak — fuse with embeddings.
         if allow_embed {
-            if let Some(fused) = crate::classify_embed::fuse_with_bm25(query, scores, subjects) {
-                return Some(fused);
+            if let Some(d) = fused(scores) {
+                return Some(d);
             }
         }
         // Fall back to plain BM25 best if it still clears the normal bar.
         if let Some(subject) = index.best(scores) {
-            return Some(subject);
+            return Some(Decision {
+                subject,
+                confidence: Confidence::Low,
+                basis: Basis::Lexical,
+            });
         }
     } else if allow_embed {
-        if let Some(fused) = crate::classify_embed::fuse_with_bm25(query, scores, subjects) {
-            return Some(fused);
+        if let Some(d) = fused(scores) {
+            return Some(d);
         }
     }
     None
+}
+
+/// Terms worth remembering after a user assigns a file to a subject:
+/// distinctive words/phrase from the filename, plus words that repeat in the
+/// document text. Nothing here is language- or domain-specific.
+pub fn learnable_terms(stem: &str, doc_text: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let push = |t: String, out: &mut Vec<String>| {
+        if !out.iter().any(|o| o == &t) {
+            out.push(t);
+        }
+    };
+
+    let keep = |t: &str| {
+        t.len() >= 4
+            && !is_stop(t)
+            && !is_numeric(t)
+            && !t.chars().any(|c| c.is_ascii_digit())
+    };
+
+    // Filename: split on separators/camelCase, keep real words.
+    let pieces: Vec<String> = split_filename_pieces(&normalize(stem))
+        .into_iter()
+        .filter(|t| keep(t))
+        .collect();
+    if (2..=5).contains(&pieces.len()) {
+        push(pieces.join(" "), &mut out);
+    }
+    for t in &pieces {
+        push(t.clone(), &mut out);
+    }
+
+    // Document text: words that recur are usually the topic.
+    if let Some(text) = doc_text {
+        let mut freq: HashMap<String, u32> = HashMap::new();
+        for word in normalize(&text.chars().take(6000).collect::<String>()).split_whitespace() {
+            if word.len() >= 5 && keep(word) {
+                *freq.entry(word.to_string()).or_insert(0) += 1;
+            }
+        }
+        let mut ranked: Vec<_> = freq.into_iter().filter(|(_, c)| *c >= 3).collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        for (w, _) in ranked.into_iter().take(6) {
+            push(w, &mut out);
+        }
+    }
+    out
+}
+
+/// Normalised tokens of a subject name / keyword (used to avoid stealing terms
+/// that clearly belong to another subject).
+pub fn tokens_of(text: &str) -> Vec<String> {
+    normalize(text)
+        .split_whitespace()
+        .filter(|t| !is_stop(t) && !is_numeric(t))
+        .map(|t| t.to_string())
+        .collect()
 }
 
 /// Enrich keywords for matching while keeping every user-entered phrase.
@@ -1066,5 +1272,39 @@ mod tests {
         assert_eq!(classify("pf_tax_return_summary.pdf", &subjects), "Personal Finance (PF)");
         assert_eq!(classify("random_tips_guide.pdf", &subjects), "General");
         assert_eq!(classify("Slow_Braised_Short_Ribs.pdf", &subjects), "Kitchen");
+    }
+
+    #[test]
+    fn verdict_explains_and_rates_confidence() {
+        let subjects = sample_subjects();
+        let index = SubjectIndex::build(&subjects);
+        let v = classify_detailed(
+            &PathBuf::from("hotel booking itinerary.pdf"),
+            &index,
+            &subjects,
+            false,
+            false,
+        );
+        assert_eq!(v.subject, "Travel Planning");
+        assert_eq!(v.confidence, Some(Confidence::High));
+        assert!(v.reason.starts_with("Filename matches"), "{}", v.reason);
+        assert!(v.reason.contains("itinerary") || v.reason.contains("hotel booking"));
+
+        let none = classify_detailed(&PathBuf::from("zzz.bin"), &index, &subjects, false, false);
+        assert_eq!(none.subject, "General");
+        assert_eq!(none.confidence, None);
+        assert_eq!(none.confidence_str(), "none");
+    }
+
+    #[test]
+    fn learnable_terms_are_distinctive_and_domain_free() {
+        let doc = "garden beds garden soil compost garden beds compost raised beds compost";
+        let terms = learnable_terms("Raised_Bed_Plan_2026-v2", Some(doc));
+        assert!(terms.iter().any(|t| t == "raised plan"), "{terms:?}");
+        assert!(terms.iter().any(|t| t == "garden"), "{terms:?}");
+        assert!(terms.iter().any(|t| t == "compost"), "{terms:?}");
+        // numbers / versions / short fragments never become terms
+        assert!(!terms.iter().any(|t| t.chars().any(|c| c.is_ascii_digit())), "{terms:?}");
+        assert!(!terms.iter().any(|t| t.len() < 4));
     }
 }

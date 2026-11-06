@@ -136,6 +136,11 @@ function splitKeywords(text: string): string[] {
     .filter(Boolean);
 }
 
+/** Unsure matches start unticked so nothing questionable moves by accident. */
+function defaultSelection(items: PreviewItem[]): Set<string> {
+  return new Set(items.filter((i) => i.confidence !== "low").map((i) => i.source));
+}
+
 export default function App() {
   const [tab, setTab] = useState<TabId>("home");
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -151,6 +156,9 @@ export default function App() {
     "existing",
   );
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** Subjects the user picked in the preview instead of Tidy's suggestion. */
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [learnedCounts, setLearnedCounts] = useState<Record<string, number>>({});
   const [canRevert, setCanRevert] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftKeywords, setDraftKeywords] = useState("");
@@ -200,7 +208,7 @@ export default function App() {
         if (items.length === 0) return;
         setPreviewKind("pending");
         setPreview(items);
-        setSelected(new Set(items.map((i) => i.source)));
+        setSelected(defaultSelection(items));
       })
       .catch(() => {});
   }, [refresh]);
@@ -243,7 +251,7 @@ export default function App() {
         if (items.length === 0) return;
         setPreviewKind("pending");
         setPreview(items);
-        setSelected(new Set(items.map((i) => i.source)));
+        setSelected(defaultSelection(items));
         setTab("home");
       });
       if (cancelled) {
@@ -434,7 +442,7 @@ export default function App() {
       const items = await invoke<PreviewItem[]>("preview_existing");
       setPreviewKind("existing");
       setPreview(items);
-      setSelected(new Set(items.map((i) => i.source)));
+      setSelected(defaultSelection(items));
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -451,7 +459,7 @@ export default function App() {
       const items = await invoke<PreviewItem[]>("preview_reorganize");
       setPreviewKind("reorganize");
       setPreview(items);
-      setSelected(new Set(items.map((i) => i.source)));
+      setSelected(defaultSelection(items));
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -468,7 +476,20 @@ export default function App() {
     try {
       const chosen = preview.filter((p) => selected.has(p.source));
       const sources = chosen.map((p) => p.source);
-      const subjects = Object.fromEntries(chosen.map((p) => [p.source, p.subject]));
+      const subjects = Object.fromEntries(
+        chosen.map((p) => [p.source, overrides[p.source] ?? p.subject]),
+      );
+      // Learn from every file the user re-assigned (before it moves).
+      const corrections = chosen
+        .filter((p) => overrides[p.source] && overrides[p.source] !== p.subject)
+        .map((p) => ({ source: p.source, subject: overrides[p.source] }));
+      if (corrections.length > 0) {
+        try {
+          await invoke<number>("record_corrections", { items: corrections });
+        } catch {
+          /* learning is best-effort; never block the move */
+        }
+      }
       const moved = await invoke<MoveRecord[]>("apply_existing", { sources, subjects });
       setPreview(null);
       setNotice(`Filed ${plural(moved.length, "file")} · Undo is available below`);
@@ -479,6 +500,28 @@ export default function App() {
       setBusy(false);
       setProgress(null);
     }
+  }
+
+  useEffect(() => {
+    if (!preview) setOverrides({});
+  }, [preview]);
+
+  const refreshLearned = useCallback(async () => {
+    try {
+      setLearnedCounts(await invoke<Record<string, number>>("learned_counts"));
+    } catch {
+      setLearnedCounts({});
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshLearned();
+  }, [refreshLearned, tab, preview]);
+
+  async function forgetLearned(subject: string) {
+    await invoke("forget_learned", { subject });
+    await refreshLearned();
+    setNotice(`Forgot what Tidy learned for ${subject}`);
   }
 
   const dismissPreview = useCallback(async () => {
@@ -661,9 +704,12 @@ export default function App() {
     const picked = preview.filter((p) => selected.has(p.source));
     return {
       subjects: new Set(picked.map((p) => p.subject)).size,
-      unsure: preview.filter((p) => p.subject === "General").length,
+      unsure: preview.filter((p) => (overrides[p.source] ?? p.subject) === "General").length,
+      review: preview.filter(
+        (p) => p.confidence === "low" && (overrides[p.source] ?? p.subject) !== "General",
+      ).length,
     };
-  }, [preview, selected]);
+  }, [preview, selected, overrides]);
 
   return (
     <div className="app">
@@ -1276,6 +1322,18 @@ export default function App() {
                           : "No keywords yet — only files containing the subject name will match"}
                       </p>
                     )}
+                    {editing !== s.name && (learnedCounts[s.name] ?? 0) > 0 && (
+                      <p className="muted learned-note">
+                        Learned {plural(learnedCounts[s.name], "extra term")} from your corrections ·{" "}
+                        <button
+                          type="button"
+                          className="text-btn"
+                          onClick={() => forgetLearned(s.name)}
+                        >
+                          Forget
+                        </button>
+                      </p>
+                    )}
                     {editing !== s.name && (
                       <div className="btn-row">
                         <button
@@ -1568,6 +1626,15 @@ export default function App() {
                   {previewKind === "reorganize"
                     ? "These files look like they belong in a different subject. Untick any you want to leave alone."
                     : "Here's where each file will go. Untick anything you want to leave where it is — nothing moves until you confirm."}
+                  {previewStats && previewStats.review > 0 && (
+                    <>
+                      {" "}
+                      <span className="unsure-note">
+                        {plural(previewStats.review, "unsure match", "unsure matches")} start
+                        unticked — check them, or pick the right subject.
+                      </span>
+                    </>
+                  )}
                   {previewStats && previewStats.unsure > 0 && (
                     <>
                       {" "}
@@ -1600,40 +1667,83 @@ export default function App() {
                       </span>
                     </div>
                     <ul className="preview-list">
-                      {preview.map((item) => (
-                        <li
-                          key={item.source}
-                          className={item.subject === "General" ? "unsure" : ""}
-                        >
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={selected.has(item.source)}
-                              onChange={(e) => {
-                                setSelected((prev) => {
-                                  const next = new Set(prev);
-                                  if (e.target.checked) next.add(item.source);
-                                  else next.delete(item.source);
-                                  return next;
-                                });
-                              }}
-                            />
-                            <span>
-                              <strong title={item.filename}>{item.filename}</strong>
-                              <span className="route-tag">
-                                {item.fromSubject != null && (
-                                  <>
-                                    {item.fromSubject}
-                                    {item.fromFileType ? `/${item.fromFileType}` : ""}
-                                    <i> → </i>
-                                  </>
-                                )}
-                                {item.subject}/{item.fileType}/
+                      {preview.map((item) => {
+                        const subject = overrides[item.source] ?? item.subject;
+                        const changed = subject !== item.subject;
+                        const level = changed ? "high" : (item.confidence ?? "none");
+                        const options = Array.from(
+                          new Set([
+                            ...(config?.subjects.filter((c) => c.enabled).map((c) => c.name) ?? []),
+                            "General",
+                            subject,
+                          ]),
+                        );
+                        return (
+                          <li
+                            key={item.source}
+                            className={
+                              subject === "General" ? "unsure" : level === "low" ? "low" : ""
+                            }
+                          >
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={selected.has(item.source)}
+                                onChange={(e) => {
+                                  setSelected((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(item.source);
+                                    else next.delete(item.source);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              <span className="preview-item">
+                                <strong title={item.filename}>{item.filename}</strong>
+                                <span className="route-tag">
+                                  {item.fromSubject != null && (
+                                    <>
+                                      {item.fromSubject}
+                                      {item.fromFileType ? `/${item.fromFileType}` : ""}
+                                      <i> → </i>
+                                    </>
+                                  )}
+                                  <select
+                                    className="subject-pick"
+                                    value={subject}
+                                    aria-label={`Subject for ${item.filename}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => {
+                                      const next = e.target.value;
+                                      setOverrides((prev) => {
+                                        const copy = { ...prev };
+                                        if (next === item.subject) delete copy[item.source];
+                                        else copy[item.source] = next;
+                                        return copy;
+                                      });
+                                      setSelected((prev) => new Set(prev).add(item.source));
+                                    }}
+                                  >
+                                    {options.map((name) => (
+                                      <option key={name} value={name}>
+                                        {name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  /{item.fileType}/
+                                </span>
+                                <span className={`why ${level}`}>
+                                  {changed
+                                    ? "Your choice — Tidy will remember this"
+                                    : item.reason
+                                      ? `${level === "low" ? "Unsure · " : ""}${item.reason}`
+                                      : ""}
+                                </span>
                               </span>
-                            </span>
-                          </label>
-                        </li>
-                      ))}
+                            </label>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                   <div className="preview-tree-pane">
@@ -1645,7 +1755,9 @@ export default function App() {
                     </p>
                     <PreviewTree
                       rootName={destName}
-                      items={preview.filter((p) => selected.has(p.source))}
+                      items={preview
+                        .filter((p) => selected.has(p.source))
+                        .map((p) => ({ ...p, subject: overrides[p.source] ?? p.subject }))}
                     />
                   </div>
                 </div>

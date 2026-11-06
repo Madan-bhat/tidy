@@ -25,6 +25,12 @@ pub struct PreviewItem {
     pub from_subject: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_file_type: Option<String>,
+    /// Why Tidy picked this subject.
+    #[serde(default)]
+    pub reason: String,
+    /// "high" | "medium" | "low" | "none"
+    #[serde(default)]
+    pub confidence: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -255,10 +261,14 @@ where
             });
             if let Ok(results) = rx.recv_timeout(Duration::from_secs(30)) {
                 for (slot, found) in idxs.iter().zip(results) {
-                    if let Some(subject) = found {
-                        if let Ok(plan) =
+                    if let Some((subject, cos)) = found {
+                        if let Ok(mut plan) =
                             mover::plan_move_to_subject(&merged[*slot].0, config, &subject)
                         {
+                            plan.reason =
+                                "Name and contents are close in meaning to this subject".into();
+                            plan.confidence =
+                                if cos >= 0.45 { "medium" } else { "low" }.to_string();
                             merged[*slot].1 = Some(plan);
                         }
                     }
@@ -474,5 +484,7 @@ fn to_preview(
         filename: planned.filename,
         from_subject,
         from_file_type,
+        reason: planned.reason,
+        confidence: planned.confidence,
     }
 }

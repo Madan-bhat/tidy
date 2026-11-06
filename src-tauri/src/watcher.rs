@@ -230,7 +230,7 @@ fn process_new_file(app: &AppHandle, path: &Path) {
         return;
     }
 
-    let cfg = config::load();
+    let cfg = config::load_effective();
     if !cfg.monitoring_enabled || !config::paths_ready(&cfg) {
         return;
     }
@@ -254,6 +254,8 @@ fn process_new_file(app: &AppHandle, path: &Path) {
                 filename: planned.filename,
                 from_subject: None,
                 from_file_type: None,
+                reason: planned.reason,
+                confidence: planned.confidence,
             });
             let _ = app.emit("organize-pending", crate::pending::list());
         }
