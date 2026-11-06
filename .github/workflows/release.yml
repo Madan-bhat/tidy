@@ -2,6 +2,11 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to create/use (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
   push:
     tags:
       - "v*"
@@ -43,14 +48,29 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build Tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Tidy ${{ github.ref_name }}"
-          releaseBody: "Desktop installers for macOS, Windows, and Linux."
+          tagName: ${{ steps.tag.outputs.name }}
+          releaseName: "Tidy ${{ steps.tag.outputs.name }}"
+          releaseBody: |
+            Desktop installers for macOS, Windows, and Linux.
+
+            - macOS: `.dmg`
+            - Windows: NSIS `.exe`
+            - Linux: `.AppImage` / `.deb`
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
