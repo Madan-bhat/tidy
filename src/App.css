@@ -378,7 +378,17 @@ input[type="radio"] {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(220px, 0.9fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.preview-layout > div:first-child {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .preview-tree-pane {
@@ -386,7 +396,7 @@ input[type="radio"] {
   border-radius: 12px;
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.55);
-  max-height: 420px;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -1759,6 +1769,7 @@ input[type="radio"] {
   width: min(620px, 100%);
   max-height: min(84vh, 720px);
   padding: 20px 22px 18px;
+  overflow: hidden;
 }
 
 .modal-head,
@@ -1768,6 +1779,11 @@ input[type="radio"] {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+}
+
+.modal-head,
+.modal-foot {
+  flex-shrink: 0;
 }
 
 .modal-head h2 {
@@ -1781,6 +1797,7 @@ input[type="radio"] {
 .modal-head + .muted,
 .modal .intro {
   margin: 4px 0 10px;
+  flex-shrink: 0;
 }
 
 .preview-actions {
@@ -1792,7 +1809,7 @@ input[type="radio"] {
 .preview-list {
   flex: 1;
   min-height: 0;
-  margin: 8px 0 16px;
+  margin: 8px 0 0;
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1841,6 +1858,8 @@ input[type="radio"] {
 .modal-foot {
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 14px;
+  padding-top: 4px;
 }
 
 .modal-foot .secondary {

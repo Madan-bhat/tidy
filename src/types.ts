@@ -37,6 +37,9 @@ export interface PreviewItem {
   subject: string;
   fileType: string;
   filename: string;
+  /** Present when re-sorting files already under the destination. */
+  fromSubject?: string | null;
+  fromFileType?: string | null;
 }
 
 export interface TypeRule {

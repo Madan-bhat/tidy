@@ -41,6 +41,7 @@ fn save_config(
     if new_config.subjects.is_empty() {
         new_config.subjects = subjects::general_defaults();
     }
+    classify_subject::enrich_all(&mut new_config.subjects);
 
     config::save(&new_config)?;
 
@@ -134,7 +135,8 @@ fn confirm_proposed_subjects(
     if subjects.is_empty() {
         return Err("No subjects to apply".into());
     }
-    let incoming = import_parse::to_subject_defs(&subjects);
+    let mut incoming = import_parse::to_subject_defs(&subjects);
+    classify_subject::enrich_all(&mut incoming);
     let mut cfg = config::load();
     match mode.as_str() {
         "merge" => {
@@ -150,16 +152,17 @@ fn confirm_proposed_subjects(
                         }
                     }
                     existing.enabled = true;
+                    classify_subject::enrich_subject(existing);
                 } else {
                     cfg.subjects.push(next);
                 }
             }
         }
         _ => {
-            // replace
             cfg.subjects = incoming;
         }
     }
+    classify_subject::enrich_all(&mut cfg.subjects);
     config::save(&cfg)?;
     Ok(cfg)
 }
@@ -168,6 +171,12 @@ fn confirm_proposed_subjects(
 fn preview_existing(app: AppHandle) -> Result<Vec<PreviewItem>, String> {
     let cfg = config::load();
     organize_existing::preview(&app, &cfg)
+}
+
+#[tauri::command]
+fn preview_reorganize(app: AppHandle) -> Result<Vec<PreviewItem>, String> {
+    let cfg = config::load();
+    organize_existing::preview_reorganize(&app, &cfg)
 }
 
 #[tauri::command]
@@ -256,12 +265,15 @@ fn upsert_subject(name: String, keywords: Vec<String>) -> Result<AppConfig, Stri
     let mut cfg = config::load();
     if let Some(existing) = cfg.subjects.iter_mut().find(|s| s.name == name) {
         existing.keywords = keywords;
+        classify_subject::enrich_subject(existing);
     } else {
-        cfg.subjects.push(SubjectDef {
+        let mut subject = SubjectDef {
             name,
             keywords,
             enabled: true,
-        });
+        };
+        classify_subject::enrich_subject(&mut subject);
+        cfg.subjects.push(subject);
     }
     config::save(&cfg)?;
     Ok(cfg)
@@ -284,10 +296,20 @@ fn delete_subject(name: String) -> Result<AppConfig, String> {
 
 #[tauri::command]
 fn apply_subject_preset(preset_id: String) -> Result<AppConfig, String> {
-    let subjects = subjects::preset_by_id(&preset_id)
+    let mut subjects = subjects::preset_by_id(&preset_id)
         .ok_or_else(|| format!("Unknown preset: {preset_id}"))?;
+    classify_subject::enrich_all(&mut subjects);
     let mut cfg = config::load();
     cfg.subjects = subjects;
+    config::save(&cfg)?;
+    Ok(cfg)
+}
+
+/// Re-expand keywords for current subjects (fixes syllabus-style imports).
+#[tauri::command]
+fn refresh_subject_keywords() -> Result<AppConfig, String> {
+    let mut cfg = config::load();
+    classify_subject::enrich_all(&mut cfg.subjects);
     config::save(&cfg)?;
     Ok(cfg)
 }
@@ -322,12 +344,14 @@ pub fn run() {
             propose_subjects_from_text,
             confirm_proposed_subjects,
             preview_existing,
+            preview_reorganize,
             apply_existing,
             get_rules,
             set_subject_enabled,
             upsert_subject,
             delete_subject,
             apply_subject_preset,
+            refresh_subject_keywords,
             default_downloads_path,
         ])
         .setup(|app| {
