@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version tag to create/use (e.g. v1.0.0)"
+        description: "Release version tag (e.g. v1.0.0)"
         required: true
         default: "v1.0.0"
   push:
     tags:
       - "v*"
 
+# Needed so tauri-action can create/upload a GitHub Release.
 permissions:
   contents: write
 
@@ -53,10 +54,17 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ inputs.version }}"
           else
-            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ github.ref_name }}"
           fi
+          # Never publish under branch names like "main"
+          if [[ ! "$TAG" =~ ^v[0-9] ]]; then
+            echo "Invalid tag '$TAG' — use something like v1.0.0"
+            exit 1
+          fi
+          echo "name=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Using release tag: $TAG"
 
       - name: Build Tauri
         uses: tauri-apps/tauri-action@v0
@@ -74,3 +82,17 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Backup: keep installers even if release upload fails
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tidy-${{ matrix.platform }}-${{ steps.tag.outputs.name || 'build' }}
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+          if-no-files-found: ignore
+          retention-days: 14
