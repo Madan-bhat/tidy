@@ -20,29 +20,33 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400..700&display=swap"
     />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lenis@1.3.27/dist/lenis.css" />
     <link rel="stylesheet" href="./styles.css" />
     <script>
       document.documentElement.classList.add("js");
     </script>
   </head>
   <body>
-    <header class="nav">
-      <a class="nav-brand" href="#top" aria-label="Tidy home">
-        <span class="dot" aria-hidden="true"></span>Tidy
-      </a>
-      <nav aria-label="Sections">
-        <a href="#features">Features</a>
-        <a href="#how">How it works</a>
-        <a href="#safety">Privacy</a>
-        <a href="#faq">FAQ</a>
-        <a class="nav-cta" href="#download">Download</a>
-      </nav>
+    <div class="scroll-progress" aria-hidden="true"><span></span></div>
+    <header class="nav-wrap">
+      <div class="nav">
+        <a class="nav-brand" href="#top" aria-label="Tidy home">
+          <span class="dot" aria-hidden="true"></span>Tidy
+        </a>
+        <nav aria-label="Sections">
+          <a href="#features">Features</a>
+          <a href="#how">How it works</a>
+          <a href="#safety">Privacy</a>
+          <a href="#faq">FAQ</a>
+          <a class="nav-cta" href="#download">Download</a>
+        </nav>
+      </div>
     </header>
 
     <main id="top">
       <!-- ============ Hero ============ -->
       <section class="hero">
-        <div class="hero-copy">
+        <div class="hero-copy" data-speed="-0.06">
           <p class="kicker reveal" style="--d: 0ms">Free desktop app · macOS · Windows · Linux</p>
           <h1 class="wordmark reveal" style="--d: 60ms">
             Tidy<span class="pulse" aria-hidden="true"></span>
@@ -63,6 +67,7 @@
           </ul>
         </div>
 
+        <div class="ledger-float" data-speed="0.08">
         <figure class="ledger" aria-label="Example: Tidy proposes where four downloads will go">
           <div class="ledger-head">
             <span class="ledger-title">4 new downloads ready to file</span>
@@ -99,7 +104,32 @@
             <span class="confirm" aria-hidden="true">Move 4 files</span>
           </div>
         </figure>
+        </div>
       </section>
+
+      <!-- ============ Marquee (speed follows scroll velocity) ============ -->
+      <div class="band" aria-hidden="true">
+        <div class="band-track">
+          <div class="band-set">
+            <span>lecture_07.pdf <i>→</i> <b>Calculus</b>/Documents</span>
+            <span>lab3_titration.docx <i>→</i> <b>Chemistry</b>/Documents</span>
+            <span>dijkstra.py <i>→</i> <b>Algorithms</b>/Code</span>
+            <span>week9_slides.pptx <i>→</i> <b>Economics</b>/Presentations</span>
+            <span>survey_data.csv <i>→</i> <b>Statistics</b>/Spreadsheets</span>
+            <span>renaissance_essay.docx <i>→</i> <b>History</b>/Documents</span>
+            <span>circuit_sim.zip <i>→</i> <b>Electronics</b>/Archives</span>
+          </div>
+          <div class="band-set">
+            <span>lecture_07.pdf <i>→</i> <b>Calculus</b>/Documents</span>
+            <span>lab3_titration.docx <i>→</i> <b>Chemistry</b>/Documents</span>
+            <span>dijkstra.py <i>→</i> <b>Algorithms</b>/Code</span>
+            <span>week9_slides.pptx <i>→</i> <b>Economics</b>/Presentations</span>
+            <span>survey_data.csv <i>→</i> <b>Statistics</b>/Spreadsheets</span>
+            <span>renaissance_essay.docx <i>→</i> <b>History</b>/Documents</span>
+            <span>circuit_sim.zip <i>→</i> <b>Electronics</b>/Archives</span>
+          </div>
+        </div>
+      </div>
 
       <!-- ============ Before / after ============ -->
       <section class="ba" aria-labelledby="ba-title">
@@ -118,19 +148,21 @@
 
         <div class="ba-grid">
           <figure class="ba-pane before">
-            <figcaption><span>Before</span> ~/Downloads · 11 files</figcaption>
+            <figcaption>
+              <span>Before</span> ~/Downloads · <em class="ba-count" data-total="11">11 files</em>
+            </figcaption>
             <ul class="mess">
-              <li>limits_worksheet_3.pdf</li>
-              <li>Screenshot 2026-10-12 at 21.04.png</li>
-              <li>alkane_reactions_lab.docx</li>
-              <li>week5_slides.pptx</li>
-              <li>binary_tree_insert.py</li>
-              <li>IMG_2041.jpg</li>
-              <li>integration_by_parts_notes.pdf</li>
-              <li>hashing_assignment.zip</li>
-              <li>spectroscopy_pyq_2024.pdf</li>
-              <li>marks.xlsx</li>
-              <li>graph_bfs_dfs.pdf</li>
+              <li data-file="0">limits_worksheet_3.pdf</li>
+              <li data-file="1">Screenshot 2026-10-12 at 21.04.png</li>
+              <li data-file="2">alkane_reactions_lab.docx</li>
+              <li data-file="3">week5_slides.pptx</li>
+              <li data-file="4">binary_tree_insert.py</li>
+              <li data-file="5">IMG_2041.jpg</li>
+              <li data-file="6">integration_by_parts_notes.pdf</li>
+              <li data-file="7">hashing_assignment.zip</li>
+              <li data-file="8">spectroscopy_pyq_2024.pdf</li>
+              <li data-file="9">marks.xlsx</li>
+              <li data-file="10">graph_bfs_dfs.pdf</li>
             </ul>
           </figure>
           <span class="ba-arrow" aria-hidden="true"></span>
@@ -139,22 +171,22 @@
             <div class="tree">
               <div class="t-subj">Calculus/</div>
               <div class="t-type">Documents/</div>
-              <div class="t-file">limits_worksheet_3.pdf</div>
-              <div class="t-file">integration_by_parts_notes.pdf</div>
+              <div class="t-file" data-file="0">limits_worksheet_3.pdf</div>
+              <div class="t-file" data-file="6">integration_by_parts_notes.pdf</div>
               <div class="t-subj">Data Structures/</div>
               <div class="t-type">Archives/</div>
-              <div class="t-file">hashing_assignment.zip</div>
+              <div class="t-file" data-file="7">hashing_assignment.zip</div>
               <div class="t-type">Code/</div>
-              <div class="t-file">binary_tree_insert.py</div>
+              <div class="t-file" data-file="4">binary_tree_insert.py</div>
               <div class="t-type">Documents/</div>
-              <div class="t-file">graph_bfs_dfs.pdf</div>
+              <div class="t-file" data-file="10">graph_bfs_dfs.pdf</div>
               <div class="t-subj">Organic Chemistry/</div>
               <div class="t-type">Documents/</div>
-              <div class="t-file">alkane_reactions_lab.docx</div>
-              <div class="t-file">spectroscopy_pyq_2024.pdf</div>
+              <div class="t-file" data-file="2">alkane_reactions_lab.docx</div>
+              <div class="t-file" data-file="8">spectroscopy_pyq_2024.pdf</div>
               <div class="t-subj muted">General/</div>
               <div class="t-type">Images/ · Presentations/ · Spreadsheets/</div>
-              <div class="t-file">4 files without a clear subject</div>
+              <div class="t-file" data-file="9">4 files without a clear subject</div>
             </div>
           </figure>
         </div>
@@ -240,6 +272,7 @@
           <p class="kicker">How it works</p>
           <h2 id="how-title" class="section-title">Set up in about a minute.</h2>
         </div>
+        <div class="steps-line" aria-hidden="true"><span></span></div>
         <ol class="steps">
           <li class="reveal-on-scroll">
             <span class="step-n">01</span>
@@ -492,7 +525,10 @@
     <footer class="foot">
       <span class="foot-mark">Tidy</span>
       <span>Local · Private · Confirm before move</span>
-      <a href="https://github.com/Madan-bhat/tidy">GitHub</a>
+      <span class="foot-links">
+        <a href="https://github.com/Madan-bhat/tidy">GitHub</a>
+        <button type="button" class="to-top" data-scroll-to="#top">Back to top ↑</button>
+      </span>
     </footer>
 
     <script>
@@ -534,6 +570,8 @@
         });
       })();
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/lenis@1.3.27/dist/lenis.min.js"></script>
+    <script src="./site.js"></script>
     <script>
       window.va =
         window.va ||

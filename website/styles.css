@@ -30,7 +30,8 @@
   box-sizing: border-box;
 }
 
-html {
+/* Lenis owns scrolling when it loads; native smoothing would fight it. */
+html:not(.lenis) {
   scroll-behavior: smooth;
 }
 
@@ -1026,6 +1027,227 @@ main {
 .faq-list em {
   font-style: normal;
   color: var(--ink);
+}
+
+/* ---------- Scroll-driven chrome (Lenis) ---------- */
+
+.scroll-progress {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 60;
+  height: 2px;
+  pointer-events: none;
+}
+
+.scroll-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.nav-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  border-bottom: 1px solid transparent;
+  transition: transform 420ms var(--ease), background 240ms ease, border-color 240ms ease,
+    backdrop-filter 240ms ease;
+}
+
+.nav-wrap .nav {
+  transition: padding 240ms var(--ease);
+}
+
+.nav-wrap.scrolled {
+  background: rgba(245, 246, 244, 0.82);
+  border-bottom-color: var(--line);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  backdrop-filter: blur(12px) saturate(1.2);
+}
+
+.nav-wrap.scrolled .nav {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.nav-wrap.hidden {
+  transform: translateY(-100%);
+}
+
+.hero-copy,
+.ledger-float {
+  will-change: transform;
+}
+
+/* Marquee — position and skew are written by site.js every frame. */
+.band {
+  position: relative;
+  left: 50%;
+  width: 100vw;
+  margin-left: -50vw;
+  overflow: hidden;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: rgba(251, 251, 250, 0.6);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+.band + .ba {
+  border-top: none;
+}
+
+.band-track {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+}
+
+.band:not(.live) .band-track {
+  flex-wrap: wrap;
+  width: auto;
+  justify-content: center;
+}
+
+.band:not(.live) .band-set + .band-set {
+  display: none;
+}
+
+.band-set {
+  display: flex;
+  flex: none;
+}
+
+.band-set span {
+  flex: none;
+  padding: 0 28px;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.band-set i {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.band-set b {
+  font-weight: 500;
+  color: var(--accent-deep);
+}
+
+/* Before/after is scrubbed by scroll: files leave Downloads and appear in the tree. */
+.ba-count {
+  font-style: normal;
+}
+
+.scrub .mess li {
+  transition: opacity 360ms var(--ease), transform 360ms var(--ease), color 360ms ease;
+}
+
+.scrub .mess li.filed {
+  opacity: 0.22;
+  transform: translateX(10px);
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
+}
+
+.scrub .tree .t-file {
+  opacity: 0;
+  transform: translateX(-10px);
+  transition: opacity 420ms var(--ease), transform 420ms var(--ease);
+}
+
+.scrub .tree .t-file.in {
+  opacity: 1;
+  transform: none;
+  color: var(--ink-2);
+}
+
+/* How-it-works: one rule across the steps fills with section progress. */
+.steps-line {
+  height: 2px;
+  margin-top: 44px;
+  background: var(--line-strong);
+}
+
+.steps-line span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.how .steps {
+  margin-top: 0;
+}
+
+.how .steps li {
+  border-top: none;
+}
+
+.how .steps li .step-n {
+  transition: color 300ms ease;
+  color: var(--faint);
+}
+
+.how .steps li.passed .step-n {
+  color: var(--accent);
+}
+
+/* Matching explainer: heading pins while the steps scroll past. */
+.match-copy {
+  position: sticky;
+  top: 110px;
+}
+
+.js .match-steps li.reveal-on-scroll {
+  transition: opacity 560ms var(--ease) var(--d, 0ms), transform 560ms var(--ease) var(--d, 0ms),
+    border-color 300ms ease, box-shadow 300ms ease;
+}
+
+.match-steps li.current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset, 0 24px 40px -30px rgba(16, 20, 19, 0.35);
+}
+
+.match-steps li .m-bar b {
+  transition: width 700ms var(--ease);
+}
+
+.fx .match-steps li:not(.current) .m-bar b {
+  width: calc(var(--w) * 0.7 * 0.35);
+}
+
+.foot-links {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 18px;
+}
+
+.to-top {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.to-top:hover {
+  color: var(--accent-deep);
+  text-decoration: underline;
+}
+
+@media (max-width: 920px) {
+  .match-copy {
+    position: static;
+  }
 }
 
 /* ---------- Footer ---------- */
