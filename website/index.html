@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tidy — Downloads, sorted by subject</title>
+    <meta
+      name="description"
+      content="Tidy is a local desktop file organizer. It watches your Downloads folder, proposes subject and type folders, and moves nothing until you confirm."
+    />
+    <meta name="theme-color" content="#f5f6f4" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400..700&display=swap"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="nav-brand" href="#top" aria-label="Tidy home">
+        <span class="dot" aria-hidden="true"></span>Tidy
+      </a>
+      <nav aria-label="Sections">
+        <a href="#how">How it works</a>
+        <a class="nav-cta" href="#download">Download</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="kicker reveal" style="--d: 0ms">Local file organizer · v1.0</p>
+          <h1 class="wordmark reveal" style="--d: 60ms">
+            Tidy<span class="pulse" aria-hidden="true"></span>
+          </h1>
+          <p class="lede reveal" style="--d: 160ms">
+            Your Downloads, filed into course subjects and file types — on your
+            machine, and only after you confirm.
+          </p>
+          <div class="cta-row reveal" style="--d: 240ms">
+            <a class="btn primary" id="hero-cta" href="#download">Download Tidy</a>
+            <a class="btn quiet" href="#how">How it works</a>
+          </div>
+          <ul class="facts reveal" style="--d: 320ms">
+            <li>No account</li>
+            <li>No cloud</li>
+            <li>Undo any batch</li>
+          </ul>
+        </div>
+
+        <figure class="ledger" aria-label="Example: Tidy proposes where three downloads will go">
+          <div class="ledger-head">
+            <span class="ledger-title">Confirm new downloads</span>
+            <span class="ledger-meta">3 files</span>
+          </div>
+          <div class="ledger-cols" aria-hidden="true">
+            <span>~/Downloads</span>
+            <span>Destination</span>
+          </div>
+          <ol class="routes">
+            <li style="--i: 0">
+              <span class="file">load_flow_notes.pdf</span>
+              <span class="wire" aria-hidden="true"></span>
+              <span class="dest"><b>Power Systems</b>/Documents</span>
+            </li>
+            <li style="--i: 1">
+              <span class="file">pid_tuning_lab.docx</span>
+              <span class="wire" aria-hidden="true"></span>
+              <span class="dest"><b>Control Systems</b>/Documents</span>
+            </li>
+            <li style="--i: 2">
+              <span class="file">kmap_circuit.png</span>
+              <span class="wire" aria-hidden="true"></span>
+              <span class="dest"><b>Digital Electronics</b>/Images</span>
+            </li>
+            <li style="--i: 3">
+              <span class="file">IMG_2041.heic</span>
+              <span class="wire" aria-hidden="true"></span>
+              <span class="dest unsure"><b>General</b>/Images</span>
+            </li>
+          </ol>
+          <div class="ledger-foot">
+            <span class="note">Nothing moves until you confirm.</span>
+            <span class="confirm" aria-hidden="true">Confirm &amp; move</span>
+          </div>
+        </figure>
+      </section>
+
+      <section id="how" class="how" aria-labelledby="how-title">
+        <h2 id="how-title" class="section-title">How it works</h2>
+        <ol class="steps">
+          <li>
+            <span class="step-n">01</span>
+            <h3>Point it at a folder</h3>
+            <p>Watch Downloads or any folder, and pick where sorted files should live.</p>
+          </li>
+          <li>
+            <span class="step-n">02</span>
+            <h3>Tell it your subjects</h3>
+            <p>
+              Load the B.Tech Electrical preset or paste your syllabus. Keywords
+              match filenames and document text.
+            </p>
+          </li>
+          <li>
+            <span class="step-n">03</span>
+            <h3>Review, then move</h3>
+            <p>
+              See the folder tree first. Confirm what moves, and revert the whole
+              batch if you change your mind.
+            </p>
+          </li>
+        </ol>
+        <p class="layout-line">
+          <span>Destination</span><i>/</i><span>Subject</span><i>/</i><span>Type</span><i>/</i><span>file</span>
+        </p>
+      </section>
+
+      <section id="download" class="download" aria-labelledby="download-title">
+        <div class="download-head">
+          <h2 id="download-title" class="section-title">Download</h2>
+          <p>Free for personal use. Everything runs on your machine.</p>
+        </div>
+        <div class="dl-grid">
+          <a class="dl-card" data-os="mac" href="./downloads/Tidy_1.0.0_aarch64.dmg" download>
+            <span class="dl-os">macOS</span>
+            <span class="dl-spec">Apple Silicon · 11 Big Sur or later</span>
+            <span class="dl-file">Tidy_1.0.0_aarch64.dmg</span>
+            <span class="dl-go">Download .dmg <span aria-hidden="true">↓</span></span>
+          </a>
+          <a class="dl-card" data-os="win" href="./downloads/Tidy_1.0.0_x64-setup.exe" download>
+            <span class="dl-os">Windows</span>
+            <span class="dl-spec">64-bit · Windows 10 or later</span>
+            <span class="dl-file">Tidy_1.0.0_x64-setup.exe</span>
+            <span class="dl-go">Download .exe <span aria-hidden="true">↓</span></span>
+          </a>
+          <a class="dl-card" data-os="linux" href="./downloads/Tidy_1.0.0_amd64.AppImage" download>
+            <span class="dl-os">Linux</span>
+            <span class="dl-spec">x86_64 · most distributions</span>
+            <span class="dl-file">Tidy_1.0.0_amd64.AppImage</span>
+            <span class="dl-go">Download AppImage <span aria-hidden="true">↓</span></span>
+          </a>
+        </div>
+        <p class="fineprint">
+          macOS may ask you to open Tidy from <em>System Settings → Privacy &amp; Security</em>
+          on first launch. On Linux, mark the AppImage executable with
+          <code>chmod +x</code>. Prefer source? See the project README.
+        </p>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span class="foot-mark">Tidy</span>
+      <span>Local · Private · Confirm before move</span>
+    </footer>
+
+    <script>
+      (function () {
+        var ua = navigator.userAgent;
+        if (/iPhone|iPad|iPod|Android|Mobile/i.test(ua)) return;
+        var os = /Mac/i.test(ua) ? "mac" : /Win/i.test(ua) ? "win" : /Linux|X11/i.test(ua) ? "linux" : null;
+        if (!os) return;
+        var card = document.querySelector('.dl-card[data-os="' + os + '"]');
+        var cta = document.getElementById("hero-cta");
+        if (!card || !cta) return;
+        card.classList.add("is-yours");
+        card.insertAdjacentHTML("afterbegin", '<span class="dl-badge">Your system</span>');
+        cta.href = card.getAttribute("href");
+        cta.setAttribute("download", "");
+        cta.textContent = "Download for " + card.querySelector(".dl-os").textContent;
+      })();
+    </script>
+  </body>
+</html>
