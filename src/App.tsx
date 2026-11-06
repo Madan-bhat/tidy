@@ -1424,8 +1424,9 @@ export default function App() {
             </label>
 
             <p className="hint">
-              Layout: Destination / Subject / Type / filename. Files are never
-              overwritten or deleted. Incomplete downloads are ignored until finished.
+              Closing the window keeps Tidy in the menu bar / system tray so
+              monitoring continues. Use <strong>Quit Tidy</strong> from the tray
+              menu to fully exit. Layout: Destination / Subject / Type / filename.
             </p>
           </section>
         )}

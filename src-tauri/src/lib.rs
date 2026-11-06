@@ -9,6 +9,7 @@ mod organize_existing;
 mod pending;
 mod stability;
 mod subjects;
+mod tray;
 mod watcher;
 
 use config::AppConfig;
@@ -16,7 +17,7 @@ use history::MoveRecord;
 use organize_existing::PreviewItem;
 use serde::Serialize;
 use subjects::SubjectDef;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use watcher::{Monitor, MonitorStatus};
 
 struct AppState {
@@ -330,6 +331,8 @@ pub fn run() {
             default_downloads_path,
         ])
         .setup(|app| {
+            tray::setup(app.handle())?;
+
             let handle = app.handle().clone();
             let state = app.state::<AppState>();
             watcher::try_auto_start(handle.clone(), &state.monitor);
@@ -337,6 +340,22 @@ pub fn run() {
             let _ = handle.emit("monitor-status", status);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Keep monitoring alive — hide to tray instead of quitting.
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let RunEvent::ExitRequested { api, code, .. } = &event {
+                // Closing the last window should not exit while tray is running.
+                // Explicit Quit (tray) passes a code and is allowed through.
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
