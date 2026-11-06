@@ -1312,11 +1312,20 @@ export default function App() {
                     </div>
                     {editing === s.name ? (
                       <div className="subject-edit">
-                        <input
+                        <textarea
+                          className="keywords-editor"
                           value={editKeywords}
                           onChange={(e) => setEditKeywords(e.target.value)}
-                          placeholder="keywords, comma, separated"
+                          placeholder="Paste phrases separated by commas — kept as you wrote them"
+                          rows={8}
                         />
+                        <p className="hint">
+                          {editKeywords
+                            .split(",")
+                            .map((k) => k.trim())
+                            .filter(Boolean).length}{" "}
+                          phrases · saved exactly as entered
+                        </p>
                         <div className="btn-row">
                           <button
                             type="button"
@@ -1341,8 +1350,12 @@ export default function App() {
                         </div>
                       </div>
                     ) : (
-                      <p className="muted keywords">
-                        {s.keywords.length ? s.keywords.join(" · ") : "No keywords yet"}
+                      <p className="muted keywords" title={s.keywords.join(", ")}>
+                        {s.keywords.length
+                          ? `${s.keywords.length} phrases · ${s.keywords.slice(0, 6).join(" · ")}${
+                              s.keywords.length > 6 ? "…" : ""
+                            }`
+                          : "No keywords yet"}
                       </p>
                     )}
                     <div className="btn-row">
@@ -1380,10 +1393,12 @@ export default function App() {
                 onChange={(e) => setDraftName(e.target.value)}
                 placeholder="e.g. Power Systems"
               />
-              <input
+              <textarea
+                className="keywords-editor"
                 value={draftKeywords}
                 onChange={(e) => setDraftKeywords(e.target.value)}
-                placeholder="keywords: load flow, transmission, fault"
+                placeholder="Paste many phrases separated by commas"
+                rows={4}
               />
               <button
                 type="button"

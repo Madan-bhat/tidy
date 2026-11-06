@@ -32,6 +32,8 @@ parking_lot = "0.13.0"
 thiserror = "2.0.21"
 zip = "9.4.0"
 pdf-extract = "0.12.1"
+rayon = "1.10"
+fastembed = "5"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

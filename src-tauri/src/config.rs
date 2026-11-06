@@ -51,20 +51,8 @@ pub fn load() -> AppConfig {
             if cfg.subjects.is_empty() {
                 cfg.subjects = subjects::general_defaults();
             }
-            let before: Vec<Vec<String>> = cfg
-                .subjects
-                .iter()
-                .map(|s| s.keywords.clone())
-                .collect();
-            // Expand syllabus-style keywords so filenames / acronyms can match.
+            // Expand match needles; user phrases stay first (see enrich_subject).
             crate::classify_subject::enrich_all(&mut cfg.subjects);
-            let changed = cfg.subjects.iter().zip(before.iter()).any(|(s, old)| {
-                s.keywords.len() != old.len()
-                    || s.keywords.iter().zip(old.iter()).any(|(a, b)| a != b)
-            });
-            if changed {
-                let _ = save(&cfg);
-            }
             cfg
         }
         _ => AppConfig::default(),

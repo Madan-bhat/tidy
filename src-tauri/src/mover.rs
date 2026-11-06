@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PlannedMove {
     pub source: PathBuf,
     pub destination: PathBuf,
@@ -24,6 +24,16 @@ pub fn plan_move(path: &Path, config: &AppConfig) -> Result<PlannedMove, String>
 pub fn plan_move_opts(
     path: &Path,
     config: &AppConfig,
+    allow_extract: bool,
+) -> Result<PlannedMove, String> {
+    let index = classify_subject::SubjectIndex::build(&config.subjects);
+    plan_move_with_index(path, config, &index, allow_extract)
+}
+
+pub fn plan_move_with_index(
+    path: &Path,
+    config: &AppConfig,
+    index: &classify_subject::SubjectIndex,
     allow_extract: bool,
 ) -> Result<PlannedMove, String> {
     let dest_root = config
@@ -43,7 +53,7 @@ pub fn plan_move_opts(
 
     let file_type = classify_type::classify_type(path).to_string();
     let subject =
-        classify_subject::classify_subject_opts(path, &config.subjects, allow_extract);
+        classify_subject::classify_with_index(path, index, &config.subjects, allow_extract);
 
     let target_dir = PathBuf::from(dest_root).join(&subject).join(&file_type);
     let destination = unique_path_for(path, &target_dir, &filename);

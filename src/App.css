@@ -1218,13 +1218,24 @@ input[type="radio"] {
 }
 
 .subject-edit input,
-.add-subject input {
+.subject-edit textarea,
+.add-subject input,
+.add-subject textarea,
+.keywords-editor {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px 12px;
   background: #fff;
   color: inherit;
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 96px;
+}
+
+.keywords-editor {
+  font-size: 13px;
 }
 
 .subject-general {

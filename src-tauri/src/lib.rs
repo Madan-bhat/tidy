@@ -1,3 +1,4 @@
+mod classify_embed;
 mod classify_subject;
 mod classify_type;
 mod config;
@@ -41,7 +42,7 @@ fn save_config(
     if new_config.subjects.is_empty() {
         new_config.subjects = subjects::general_defaults();
     }
-    classify_subject::enrich_all(&mut new_config.subjects);
+    classify_subject::enrich_all(&mut new_config.subjects); // trim/dedupe only
 
     config::save(&new_config)?;
 
@@ -315,6 +316,14 @@ fn refresh_subject_keywords() -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
+fn embedding_status() -> serde_json::Value {
+    serde_json::json!({
+        "ready": classify_embed::is_ready(),
+        "enabled": std::env::var_os("TIDY_DISABLE_EMBED").is_none(),
+    })
+}
+
+#[tauri::command]
 fn default_downloads_path() -> Option<String> {
     dirs::download_dir().map(|p| p.to_string_lossy().to_string())
 }
@@ -352,10 +361,16 @@ pub fn run() {
             delete_subject,
             apply_subject_preset,
             refresh_subject_keywords,
+            embedding_status,
             default_downloads_path,
         ])
         .setup(|app| {
             tray::setup(app.handle())?;
+
+            // Prefetch MiniLM in the background (first run may download ~23MB).
+            std::thread::spawn(|| {
+                let _ = classify_embed::warm_up();
+            });
 
             let handle = app.handle().clone();
             let state = app.state::<AppState>();

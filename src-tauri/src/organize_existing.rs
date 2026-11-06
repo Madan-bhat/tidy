@@ -1,10 +1,13 @@
+use crate::classify_subject::SubjectIndex;
 use crate::config::AppConfig;
 use crate::history::{self, MoveRecord};
 use crate::mover::{self, PlannedMove};
 use crate::stability;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,23 +69,11 @@ pub fn preview(app: &AppHandle, config: &AppConfig) -> Result<Vec<PreviewItem>, 
     let total = entries.len();
     emit_progress(app, "matching", 0, total, "");
 
-    let mut items = Vec::new();
-    for (i, path) in entries.into_iter().enumerate() {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        emit_progress(app, "matching", i + 1, total, &name);
+    let index = SubjectIndex::build(&config.subjects);
+    let items = classify_paths_fast(app, config, &index, &entries, |planned, _path| {
+        Some(to_preview(planned, None, None))
+    });
 
-        // Extract document text when the filename alone is too weak.
-        match mover::plan_move_opts(&path, config, true) {
-            Ok(planned) => items.push(to_preview(planned, None, None)),
-            Err(_) => continue,
-        }
-    }
-
-    items.sort_by(|a, b| a.filename.to_lowercase().cmp(&b.filename.to_lowercase()));
     emit_progress(app, "done", total, total, "");
     Ok(items)
 }
@@ -103,32 +94,96 @@ pub fn preview_reorganize(app: &AppHandle, config: &AppConfig) -> Result<Vec<Pre
     let total = entries.len();
     emit_progress(app, "matching", 0, total, "");
 
-    let mut items = Vec::new();
-    for (i, path) in entries.into_iter().enumerate() {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        emit_progress(app, "matching", i + 1, total, &name);
+    let index = SubjectIndex::build(&config.subjects);
+    let items = classify_paths_fast(app, config, &index, &entries, |planned, path| {
+        if mover::paths_equal(&planned.source, &planned.destination) {
+            return None;
+        }
+        let (from_subject, from_type) = current_placement(path, dest_path);
+        if from_subject.as_deref() == Some(planned.subject.as_str())
+            && from_type.as_deref() == Some(planned.file_type.as_str())
+            && planned.destination.file_name() == path.file_name()
+        {
+            return None;
+        }
+        Some(to_preview(planned, from_subject, from_type))
+    });
 
-        let (from_subject, from_type) = current_placement(&path, dest_path);
+    emit_progress(app, "done", total, total, "");
+    Ok(items)
+}
 
-        match mover::plan_move_opts(&path, config, true) {
-            Ok(planned) => {
-                if mover::paths_equal(&planned.source, &planned.destination) {
-                    continue;
-                }
-                // Also skip if relative placement is unchanged (same subject + type + name)
-                if from_subject.as_deref() == Some(planned.subject.as_str())
-                    && from_type.as_deref() == Some(planned.file_type.as_str())
-                    && planned.destination.file_name() == path.file_name()
-                {
-                    continue;
-                }
-                items.push(to_preview(planned, from_subject, from_type));
+/// Two-phase scan: BM25 on filenames in parallel, then PDF/DOCX extract only
+/// for files that stayed weak / General.
+fn classify_paths_fast<F>(
+    app: &AppHandle,
+    config: &AppConfig,
+    index: &SubjectIndex,
+    entries: &[PathBuf],
+    keep: F,
+) -> Vec<PreviewItem>
+where
+    F: Fn(PlannedMove, &Path) -> Option<PreviewItem> + Sync,
+{
+    let total = entries.len();
+    let done = AtomicUsize::new(0);
+
+    // Phase 1 — filename only (cheap, parallel).
+    let phase1: Vec<(PathBuf, Option<PlannedMove>)> = entries
+        .par_iter()
+        .map(|path| {
+            let planned = mover::plan_move_with_index(path, config, index, false).ok();
+            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+            if n == 1 || n == total || n % 8 == 0 {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                emit_progress(app, "matching", n, total, name);
             }
-            Err(_) => continue,
+            (path.clone(), planned)
+        })
+        .collect();
+
+    // Phase 2 — extract text only when filename ranking failed.
+    let needs_extract: Vec<PathBuf> = phase1
+        .iter()
+        .filter_map(|(path, planned)| {
+            let weak = planned
+                .as_ref()
+                .map(|p| p.subject.eq_ignore_ascii_case("General"))
+                .unwrap_or(true);
+            if weak {
+                Some(path.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let extracted: HashMapPath = if needs_extract.is_empty() {
+        HashMapPath::default()
+    } else {
+        emit_progress(app, "matching", total.saturating_sub(needs_extract.len()), total, "reading documents…");
+        needs_extract
+            .par_iter()
+            .filter_map(|path| {
+                let planned = mover::plan_move_with_index(path, config, index, true).ok()?;
+                Some((path.clone(), planned))
+            })
+            .collect()
+    };
+
+    let mut items = Vec::with_capacity(entries.len());
+    for (path, planned) in phase1 {
+        let planned = extracted
+            .get(&path)
+            .cloned()
+            .or(planned);
+        if let Some(planned) = planned {
+            if let Some(item) = keep(planned, &path) {
+                items.push(item);
+            }
         }
     }
 
@@ -137,9 +192,11 @@ pub fn preview_reorganize(app: &AppHandle, config: &AppConfig) -> Result<Vec<Pre
             .cmp(&b.from_subject)
             .then(a.filename.to_lowercase().cmp(&b.filename.to_lowercase()))
     });
-    emit_progress(app, "done", total, total, "");
-    Ok(items)
+    items
 }
+
+/// Local alias so we don't need a use at the top for PathBuf keys.
+type HashMapPath = std::collections::HashMap<PathBuf, PlannedMove>;
 
 pub fn apply(
     app: &AppHandle,
@@ -150,6 +207,7 @@ pub fn apply(
     emit_progress(app, "moving", 0, total, "");
 
     let batch_id = history::new_batch_id();
+    let index = SubjectIndex::build(&config.subjects);
     let mut results = Vec::new();
     let mut errors = Vec::new();
 
@@ -171,7 +229,7 @@ pub fn apply(
             continue;
         }
 
-        match mover::plan_move_opts(path, config, true) {
+        match mover::plan_move_with_index(path, config, &index, true) {
             Ok(planned) => {
                 if mover::paths_equal(&planned.source, &planned.destination) {
                     continue;
