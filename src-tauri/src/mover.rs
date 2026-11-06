@@ -46,7 +46,7 @@ pub fn plan_move_opts(
         classify_subject::classify_subject_opts(path, &config.subjects, allow_extract);
 
     let target_dir = PathBuf::from(dest_root).join(&subject).join(&file_type);
-    let destination = unique_path(&target_dir, &filename);
+    let destination = unique_path_for(path, &target_dir, &filename);
 
     Ok(PlannedMove {
         source: path.to_path_buf(),
@@ -57,7 +57,32 @@ pub fn plan_move_opts(
     })
 }
 
+pub fn paths_equal(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
+    }
+}
+
 pub fn execute_move(planned: &PlannedMove) -> Result<MoveRecord, String> {
+    // Already in the right place (e.g. re-organize no-op).
+    if paths_equal(&planned.source, &planned.destination) {
+        return Ok(MoveRecord {
+            id: Uuid::new_v4().to_string(),
+            source: planned.source.to_string_lossy().to_string(),
+            destination: planned.destination.to_string_lossy().to_string(),
+            subject: planned.subject.clone(),
+            file_type: planned.file_type.clone(),
+            filename: planned.filename.clone(),
+            timestamp: Utc::now().to_rfc3339(),
+            undone: false,
+            batch_id: None,
+        });
+    }
+
     if let Some(parent) = planned.destination.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Could not create folders: {e}"))?;
     }
@@ -109,9 +134,10 @@ pub fn organize_file_opts(
 }
 
 /// Never overwrite — append " (2)", " (3)", … before the extension.
-fn unique_path(dir: &Path, filename: &str) -> PathBuf {
+/// If `source` is already at the candidate path, keep that path (re-organize).
+fn unique_path_for(source: &Path, dir: &Path, filename: &str) -> PathBuf {
     let candidate = dir.join(filename);
-    if !candidate.exists() {
+    if !candidate.exists() || paths_equal(source, &candidate) {
         return candidate;
     }
 
@@ -128,7 +154,7 @@ fn unique_path(dir: &Path, filename: &str) -> PathBuf {
             None => format!("{stem} ({i})"),
         };
         let candidate = dir.join(&name);
-        if !candidate.exists() {
+        if !candidate.exists() || paths_equal(source, &candidate) {
             return candidate;
         }
     }

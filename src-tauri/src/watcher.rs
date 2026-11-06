@@ -252,6 +252,8 @@ fn process_new_file(app: &AppHandle, path: &Path) {
                 subject: planned.subject,
                 file_type: planned.file_type,
                 filename: planned.filename,
+                from_subject: None,
+                from_file_type: None,
             });
             let _ = app.emit("organize-pending", crate::pending::list());
         }

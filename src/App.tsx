@@ -460,7 +460,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<OrganizeProgress | null>(null);
   const [preview, setPreview] = useState<PreviewItem[] | null>(null);
-  const [previewKind, setPreviewKind] = useState<"existing" | "pending">("existing");
+  const [previewKind, setPreviewKind] = useState<"existing" | "pending" | "reorganize">(
+    "existing",
+  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [canRevert, setCanRevert] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -687,6 +689,23 @@ export default function App() {
     try {
       const items = await invoke<PreviewItem[]>("preview_existing");
       setPreviewKind("existing");
+      setPreview(items);
+      setSelected(new Set(items.map((i) => i.source)));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  }
+
+  async function openReorganize() {
+    setError(null);
+    setBusy(true);
+    setProgress({ phase: "matching", current: 0, total: 0, filename: "" });
+    try {
+      const items = await invoke<PreviewItem[]>("preview_reorganize");
+      setPreviewKind("reorganize");
       setPreview(items);
       setSelected(new Set(items.map((i) => i.source)));
     } catch (e) {
@@ -935,6 +954,15 @@ export default function App() {
                 </button>
                 <button type="button" className="secondary" onClick={openPreview} disabled={busy}>
                   Organize Existing Files…
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={openReorganize}
+                  disabled={busy || !config?.destinationFolder}
+                  title="Re-classify files already in the destination using improved matching"
+                >
+                  Re-organize Sorted Files…
                 </button>
               </div>
             </div>
@@ -1495,19 +1523,26 @@ export default function App() {
               <h2 id="preview-title">
                 {previewKind === "pending"
                   ? "Confirm new downloads"
-                  : "Confirm organize"}
+                  : previewKind === "reorganize"
+                    ? "Confirm re-organize"
+                    : "Confirm organize"}
               </h2>
               <button type="button" className="text-btn" onClick={dismissPreview}>
                 Close
               </button>
             </div>
             {preview.length === 0 ? (
-              <p className="muted">No eligible files in the watch folder.</p>
+              <p className="muted">
+                {previewKind === "reorganize"
+                  ? "Every file in the destination already matches the current subjects."
+                  : "No eligible files in the watch folder."}
+              </p>
             ) : (
               <>
                 <p className="muted intro">
-                  Nothing is moved until you confirm. Review the proposed folder
-                  layout below.
+                  {previewKind === "reorganize"
+                    ? "These files look mis-sorted. Nothing moves until you confirm."
+                    : "Nothing is moved until you confirm. Review the proposed folder layout below."}
                 </p>
                 <div className="preview-layout">
                   <div>
@@ -1546,7 +1581,14 @@ export default function App() {
                             <span>
                               <strong>{item.filename}</strong>
                               <span className="route-tag">
-                                → {item.subject}/{item.fileType}/
+                                {item.fromSubject != null && (
+                                  <>
+                                    {item.fromSubject}
+                                    {item.fromFileType ? `/${item.fromFileType}` : ""}
+                                    <i> → </i>
+                                  </>
+                                )}
+                                {item.subject}/{item.fileType}/
                               </span>
                             </span>
                           </label>
