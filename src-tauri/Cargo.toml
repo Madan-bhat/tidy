@@ -4,15 +4,15 @@ version = "1.0.1"
 description = "Minimalist cross-platform file organizer"
 authors = ["Tidy"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+default-run = "tidy"
 
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "tidy_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "tidy"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -33,13 +33,12 @@ thiserror = "2.0.21"
 zip = "9.4.0"
 pdf-extract = "0.12.1"
 rayon = "1.10"
-fastembed = "5"
 
-
-# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
+# Must be unwind: catch_unwind around pdf-extract is a no-op with panic=abort,
+# and corrupt PDFs were aborting the whole app during reorganize.
+panic = "unwind"
 strip = true

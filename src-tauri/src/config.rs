@@ -17,7 +17,7 @@ pub struct AppConfig {
 }
 
 fn default_subjects() -> Vec<SubjectDef> {
-    subjects::general_defaults()
+    subjects::empty_subjects()
 }
 
 impl Default for AppConfig {
@@ -27,7 +27,7 @@ impl Default for AppConfig {
             destination_folder: None,
             monitor_on_launch: true,
             monitoring_enabled: false,
-            subjects: subjects::general_defaults(),
+            subjects: subjects::empty_subjects(),
             onboarding_complete: false,
         }
     }
@@ -48,9 +48,6 @@ pub fn load() -> AppConfig {
                 .as_deref()
                 .and_then(|s| serde_json::from_str::<AppConfig>(s).ok())
                 .unwrap_or_else(|| migrate_legacy(raw.as_deref()).unwrap_or_default());
-            if cfg.subjects.is_empty() {
-                cfg.subjects = subjects::general_defaults();
-            }
             // Expand match needles; user phrases stay first (see enrich_subject).
             crate::classify_subject::enrich_all(&mut cfg.subjects);
             cfg
@@ -72,20 +69,14 @@ fn migrate_legacy(raw: Option<&str>) -> Option<AppConfig> {
     }
 
     let legacy: Legacy = serde_json::from_str(raw?).ok()?;
-    let mut subjects = subjects::general_defaults();
-    if let Some(enabled) = legacy.enabled_subjects {
-        for subject in &mut subjects {
-            if let Some(flag) = enabled.get(&subject.name) {
-                subject.enabled = *flag;
-            }
-        }
-    }
+    // Legacy only stored enable flags for a previous hardcoded list — start blank.
+    let _ = legacy.enabled_subjects;
     Some(AppConfig {
         watch_folder: legacy.watch_folder,
         destination_folder: legacy.destination_folder,
         monitor_on_launch: legacy.monitor_on_launch.unwrap_or(true),
         monitoring_enabled: legacy.monitoring_enabled.unwrap_or(false),
-        subjects,
+        subjects: subjects::empty_subjects(),
         onboarding_complete: false,
     })
 }

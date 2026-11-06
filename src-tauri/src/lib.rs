@@ -39,9 +39,6 @@ fn save_config(
     let current = config::load();
     new_config.monitoring_enabled = current.monitoring_enabled;
 
-    if new_config.subjects.is_empty() {
-        new_config.subjects = subjects::general_defaults();
-    }
     classify_subject::enrich_all(&mut new_config.subjects); // trim/dedupe only
 
     config::save(&new_config)?;
@@ -121,7 +118,7 @@ fn propose_subjects_from_text(text: String) -> Result<Vec<import_parse::Proposed
     let proposals = import_parse::parse_prompt(&text);
     if proposals.is_empty() {
         return Err(
-            "Could not find any subjects. Try lines like:\nPower Systems: load flow, transmission"
+            "Could not find any subjects. Try lines like:\nCourse Name: topic one, topic two"
                 .into(),
         );
     }
@@ -168,22 +165,40 @@ fn confirm_proposed_subjects(
     Ok(cfg)
 }
 
+// Heavy scans must be async + off the main thread: sync Tauri commands run on the
+// UI thread, which freezes the webview (progress overlay "sticks" on the last file).
 #[tauri::command]
-fn preview_existing(app: AppHandle) -> Result<Vec<PreviewItem>, String> {
-    let cfg = config::load();
-    organize_existing::preview(&app, &cfg)
+async fn preview_existing(app: AppHandle) -> Result<Vec<PreviewItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = config::load();
+        organize_existing::preview(&app, &cfg)
+    })
+    .await
+    .map_err(|e| format!("Scan failed: {e}"))?
 }
 
 #[tauri::command]
-fn preview_reorganize(app: AppHandle) -> Result<Vec<PreviewItem>, String> {
-    let cfg = config::load();
-    organize_existing::preview_reorganize(&app, &cfg)
+async fn preview_reorganize(app: AppHandle) -> Result<Vec<PreviewItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = config::load();
+        organize_existing::preview_reorganize(&app, &cfg)
+    })
+    .await
+    .map_err(|e| format!("Scan failed: {e}"))?
 }
 
 #[tauri::command]
-fn apply_existing(app: AppHandle, sources: Vec<String>) -> Result<Vec<MoveRecord>, String> {
-    let cfg = config::load();
-    organize_existing::apply(&app, &cfg, &sources)
+async fn apply_existing(
+    app: AppHandle,
+    sources: Vec<String>,
+    subjects: Option<std::collections::HashMap<String, String>>,
+) -> Result<Vec<MoveRecord>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = config::load();
+        organize_existing::apply(&app, &cfg, &sources, &subjects.unwrap_or_default())
+    })
+    .await
+    .map_err(|e| format!("Apply failed: {e}"))?
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -319,7 +334,7 @@ fn refresh_subject_keywords() -> Result<AppConfig, String> {
 fn embedding_status() -> serde_json::Value {
     serde_json::json!({
         "ready": classify_embed::is_ready(),
-        "enabled": std::env::var_os("TIDY_DISABLE_EMBED").is_none(),
+        "enabled": classify_embed::is_enabled(),
     })
 }
 
@@ -367,9 +382,13 @@ pub fn run() {
         .setup(|app| {
             tray::setup(app.handle())?;
 
-            // Prefetch MiniLM in the background (first run may download ~23MB).
+            // Prefetch MiniLM in a child process (first run may download ~23MB).
+            // If ort aborts, only the worker dies — UI keeps BM25 ranking.
             std::thread::spawn(|| {
-                let _ = classify_embed::warm_up();
+                match classify_embed::warm_up() {
+                    Ok(()) => eprintln!("[tidy] hybrid embeddings ready"),
+                    Err(e) => eprintln!("[tidy] hybrid embeddings unavailable: {e}"),
+                }
             });
 
             let handle = app.handle().clone();

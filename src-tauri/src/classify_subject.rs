@@ -22,22 +22,16 @@ const FUZZY_JACCARD: f64 = 0.72;
 /// to that list and alone cannot decide the match.
 const GENERIC_CF: f64 = 0.18;
 
+/// Only language function words and file-format names. Nothing domain specific:
+/// whether "report", "lab" or "invoice" matters is decided by each user's own
+/// subjects/keywords (BM25 IDF + per-subject rarity), never by a built-in list.
 const STOP_WORDS: &[&str] = &[
     "a", "an", "and", "or", "the", "of", "to", "in", "on", "for", "with", "using",
     "from", "into", "by", "as", "is", "are", "be", "this", "that", "these", "those",
     "including", "include", "other", "others", "such", "their", "its", "at", "via",
     "also", "more", "most", "than", "then", "over", "under", "about",
-    // Generic file/course wording — not subject-discriminating on its own.
-    "notes", "note", "lecture", "lectures", "lab", "labs", "laboratory", "manual",
-    "assignment", "assignments", "tutorial", "tutorials", "question", "questions",
-    "paper", "papers", "exam", "exams", "quiz", "test", "tests", "practical",
-    "experiment", "experiments", "viva", "record", "report", "reports", "pdf",
-    "docx", "pptx", "xlsx", "ppt", "doc", "sheet", "unit", "module", "chapter",
-    "semester", "midterm", "internal", "assessment", "homework", "worksheet",
-    "handout", "slides", "slide", "presentation", "syllabus", "reference",
-    "textbook", "book", "solved", "problems", "problem", "numerical", "derivation",
-    "formula", "revision", "important", "previous", "year", "pyq", "ia", "end",
-    "sem", "mid", "file", "study", "material", "materials", "topic", "topics",
+    // File-format words say nothing about the subject.
+    "pdf", "docx", "pptx", "xlsx", "ppt", "doc", "txt", "csv", "jpg", "jpeg", "png",
 ];
 
 /// Precomputed BM25 index over the user's subjects — build once per scan/batch.
@@ -45,6 +39,8 @@ const STOP_WORDS: &[&str] = &[
 pub struct SubjectIndex {
     docs: Vec<SubjectDoc>,
     idf: HashMap<String, f64>,
+    /// Number of subjects whose keyword bank contains the term.
+    df: HashMap<String, u32>,
     avgdl: f64,
     /// User terms longest-first for splitting concatenated filename pieces.
     dict: Vec<String>,
@@ -83,7 +79,7 @@ impl SubjectIndex {
             let mut term_phrase_df: HashMap<String, u32> = HashMap::new();
 
             let mut present = |term: &str, weight: u32| {
-                if term.is_empty() || is_stop(term) {
+                if term.is_empty() || is_stop(term) || is_numeric(term) {
                     return;
                 }
                 let e = tf.entry(term.to_string()).or_insert(0);
@@ -197,10 +193,13 @@ impl SubjectIndex {
 
         let n = docs.len() as f64;
         let mut idf = HashMap::new();
-        for (term, count) in df {
-            let nn = count as f64;
-            let value = ((n - nn + 0.5) / (nn + 0.5) + 1.0).ln();
-            idf.insert(term, value);
+        for (term, count) in &df {
+            let nn = *count as f64;
+            // Normalised so scores don't depend on how many subjects the user has:
+            // a term owned by one subject is always strong (1.5), terms shared by
+            // every subject fade toward zero.
+            let value = 1.5 * ((n - nn + 1.0) / n.max(1.0)).max(0.0).powf(1.5);
+            idf.insert(term.clone(), value);
         }
 
         let avgdl = if docs.is_empty() {
@@ -221,6 +220,7 @@ impl SubjectIndex {
         Self {
             docs,
             idf,
+            df,
             avgdl,
             dict,
         }
@@ -242,6 +242,7 @@ impl SubjectIndex {
             let mut distinctive_hits = 0u32;
             let mut phrase_hits = 0u32;
             let mut acronym_hits = 0u32;
+            let mut unique_hits = 0u32;
 
             // --- Okapi BM25 over query tokens (rarity-weighted) ---
             for qt in &query_tokens {
@@ -279,6 +280,14 @@ impl SubjectIndex {
 
                 if rarity >= 0.45 && sim >= 0.9 && contrib >= 0.35 {
                     distinctive_hits += 1;
+                    // A real word that only ONE subject owns is decisive evidence.
+                    if rarity >= 0.6
+                        && term_key.len() >= 5
+                        && self.df.get(term_key).copied().unwrap_or(0) == 1
+                        && self.docs.len() > 1
+                    {
+                        unique_hits += 1;
+                    }
                 }
             }
 
@@ -289,6 +298,13 @@ impl SubjectIndex {
                     continue;
                 }
                 if !phrase.split_whitespace().any(|w| query_set.contains(w)) {
+                    continue;
+                }
+                // Phrases built only from list-generic words must not carry a match.
+                if !phrase
+                    .split_whitespace()
+                    .any(|w| doc.rarity.get(w).copied().unwrap_or(0.35) >= 0.45)
+                {
                     continue;
                 }
                 if haystack.contains(phrase.as_str()) {
@@ -307,7 +323,7 @@ impl SubjectIndex {
                 if query_set.contains(ac.as_str()) {
                     let rarity = *doc.rarity.get(ac).unwrap_or(&1.0);
                     // Generic short codes that appear across huge keyword dumps stay weak.
-                    if ac.len() <= 2 && rarity < 0.5 {
+                    if rarity < 0.45 || (ac.len() <= 2 && rarity < 0.5) {
                         score += 0.4;
                     } else {
                         score += if ac.len() <= 2 { 1.2 } else { 2.6 };
@@ -317,7 +333,9 @@ impl SubjectIndex {
             }
 
             // Evidence gate: a fat keyword list must not win on one generic token.
-            let strong = phrase_hits >= 1 || acronym_hits >= 1 || distinctive_hits >= 2;
+            let strong =
+                phrase_hits >= 1 || acronym_hits >= 1 || distinctive_hits >= 2 || unique_hits >= 1;
+            score += 0.9 * unique_hits.min(2) as f64;
             if !strong {
                 if distinctive_hits == 1 {
                     score *= 0.35;
@@ -349,7 +367,7 @@ pub fn classify_subject_opts(
     allow_extract: bool,
 ) -> String {
     let index = SubjectIndex::build(subjects);
-    classify_with_index(path, &index, subjects, allow_extract)
+    classify_with_index(path, &index, subjects, allow_extract, true)
 }
 
 pub fn classify_with_index(
@@ -357,6 +375,7 @@ pub fn classify_with_index(
     index: &SubjectIndex,
     subjects: &[SubjectDef],
     allow_extract: bool,
+    allow_embed: bool,
 ) -> String {
     let raw_name = path
         .file_name()
@@ -370,7 +389,7 @@ pub fn classify_with_index(
 
     let mut scores = index.score_text(stem);
 
-    if let Some(subject) = decide(index, subjects, stem, &scores) {
+    if let Some(subject) = decide(index, subjects, stem, &scores, allow_embed) {
         return subject;
     }
 
@@ -383,7 +402,7 @@ pub fn classify_with_index(
                 *scores.entry(name).or_insert(0.0) += pts * 0.85;
             }
             let query = format!("{stem} {}", sample.chars().take(400).collect::<String>());
-            if let Some(subject) = decide(index, subjects, &query, &scores) {
+            if let Some(subject) = decide(index, subjects, &query, &scores, allow_embed) {
                 return subject;
             }
         }
@@ -398,6 +417,7 @@ fn decide(
     subjects: &[SubjectDef],
     query: &str,
     scores: &HashMap<String, f64>,
+    allow_embed: bool,
 ) -> Option<String> {
     let mut ranked: Vec<_> = scores.iter().collect();
     ranked.sort_by(|a, b| {
@@ -413,15 +433,19 @@ fn decide(
             return Some((*top_name).clone());
         }
         // Lexical winner exists but is close / weak — fuse with embeddings.
-        if let Some(fused) = crate::classify_embed::fuse_with_bm25(query, scores, subjects) {
-            return Some(fused);
+        if allow_embed {
+            if let Some(fused) = crate::classify_embed::fuse_with_bm25(query, scores, subjects) {
+                return Some(fused);
+            }
         }
         // Fall back to plain BM25 best if it still clears the normal bar.
         if let Some(subject) = index.best(scores) {
             return Some(subject);
         }
-    } else if let Some(fused) = crate::classify_embed::fuse_with_bm25(query, scores, subjects) {
-        return Some(fused);
+    } else if allow_embed {
+        if let Some(fused) = crate::classify_embed::fuse_with_bm25(query, scores, subjects) {
+            return Some(fused);
+        }
     }
     None
 }
@@ -433,6 +457,13 @@ fn decide(
 /// 2. Extra needles derived from the subject name + those phrases
 ///    (tokens, bigrams, parenthetical codes) — never replace (1)
 pub fn enrich_subject(subject: &mut SubjectDef) {
+    let cleaned_name = clean_subject_name(&subject.name);
+    if !cleaned_name.is_empty() {
+        subject.name = cleaned_name;
+    }
+    let old = std::mem::take(&mut subject.keywords);
+    subject.keywords = clean_keywords(&subject.name, old);
+
     let mut seen: HashSet<String> = HashSet::new();
     let mut user_phrases = Vec::new();
 
@@ -604,7 +635,7 @@ fn needles_from_text(raw: &str) -> Vec<String> {
 
     let tokens: Vec<String> = tokenize(&norm)
         .into_iter()
-        .filter(|t| !is_stop(t))
+        .filter(|t| !is_stop(t) && !is_numeric(t))
         .collect();
 
     for token in &tokens {
@@ -644,7 +675,112 @@ fn tokenize_query(haystack: &str, dict: &[String]) -> Vec<String> {
             out.push(rough);
         }
     }
-    out.into_iter().filter(|t| !t.is_empty() && !is_stop(t)).collect()
+    out.into_iter()
+        .filter(|t| !t.is_empty() && !is_stop(t) && !is_numeric(t))
+        .collect()
+}
+
+fn is_numeric(t: &str) -> bool {
+    !t.is_empty() && t.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Strip list numbering / markdown noise from a subject name:
+/// `1\. Circuits (ECA)`, `**2)** Machines`, `3 - Digital`, `## 4. Micro` → clean title.
+pub fn clean_subject_name(raw: &str) -> String {
+    let mut s = raw.trim();
+    loop {
+        let before = s;
+        s = s.trim_start_matches(|c: char| matches!(c, '#' | '*' | '_' | '>' | '-' | '\\' | '•' | '`') || c.is_whitespace());
+        // leading "12" + one of . ) ] : - (optionally backslash-escaped)
+        let digits = s.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && digits <= 3 {
+            let rest = &s[digits..];
+            let rest_trim = rest.trim_start_matches('\\');
+            if let Some(c) = rest_trim.chars().next() {
+                let after = &rest_trim[c.len_utf8()..];
+                if matches!(c, '.' | ')' | ']' | ':' | '-')
+                    && after.chars().next().map_or(true, |n| n.is_whitespace() || n == '*' || n == '_')
+                {
+                    s = after;
+                }
+            }
+        }
+        if s == before {
+            break;
+        }
+    }
+    let s = s.trim().trim_matches(|c: char| matches!(c, '*' | '_' | '`' | '\\')).trim();
+    s.replace("\\", "")
+}
+
+/// Remove junk that earlier versions auto-generated (digit-led fragments such as
+/// `1ecae`, numbering tokens, escaped list prefixes) without touching real user phrases.
+fn clean_keywords(name: &str, keywords: Vec<String>) -> Vec<String> {
+    let name_norm = normalize(name);
+    let name_tokens: HashSet<&str> = name_norm.split_whitespace().collect();
+
+    // Initials strings of long phrases: auto-generated fragments are slices of these.
+    let mut initials: Vec<String> = Vec::new();
+    let all_norm: Vec<String> = keywords.iter().map(|k| normalize(k)).collect();
+    for n in std::iter::once(&name_norm).chain(all_norm.iter()) {
+        let words: Vec<&str> = n.split_whitespace().collect();
+        if words.len() >= 3 {
+            initials.push(words.iter().filter_map(|w| w.chars().next()).collect());
+            initials.push(
+                words
+                    .iter()
+                    .filter(|w| !is_stop(w))
+                    .filter_map(|w| w.chars().next())
+                    .collect(),
+            );
+        }
+    }
+    let phrase_tokens: HashSet<String> = all_norm
+        .iter()
+        .filter(|n| n.contains(' '))
+        .flat_map(|n| n.split_whitespace().map(|t| t.to_string()).collect::<Vec<_>>())
+        .collect();
+
+    let mut out = Vec::new();
+    for kw in keywords {
+        let k = clean_subject_name(&kw);
+        let k = k.trim().to_string();
+        if k.is_empty() || is_numeric(&k) {
+            continue;
+        }
+        let n = normalize(&k);
+        if n.is_empty() || is_numeric(&n) {
+            continue;
+        }
+        // "1 electrical circuit" — numbering glued onto a phrase that exists without it.
+        if let Some((first, rest)) = n.split_once(' ') {
+            if is_numeric(first) && first.len() <= 3 {
+                let in_name = name_norm.contains(rest);
+                let elsewhere = all_norm.iter().any(|o| o == rest);
+                if in_name || elsewhere {
+                    continue;
+                }
+            }
+        }
+        if !k.contains(' ') && n.len() <= 9 {
+            let digit_led = n.chars().next().is_some_and(|c| c.is_ascii_digit())
+                && n.chars().any(|c| c.is_ascii_alphabetic());
+            if digit_led {
+                continue;
+            }
+            // Short alpha fragment that is only a slice of a phrase's initials.
+            if n.len() <= 4
+                && n.chars().all(|c| c.is_ascii_alphabetic())
+                && !name_tokens.contains(n.as_str())
+                && !phrase_tokens.contains(&n)
+                && initials.iter().any(|ini| ini.len() > n.len() && ini.contains(&n))
+            {
+                continue;
+            }
+        }
+        out.push(k);
+    }
+    out
 }
 
 /// Split on separators, camelCase, and letter↔digit boundaries.
@@ -773,21 +909,23 @@ mod tests {
     use crate::subjects::SubjectDef;
     use std::path::PathBuf;
 
-    fn user_subjects() -> Vec<SubjectDef> {
+    // Fixtures are invented and deliberately unrelated to any real user's data:
+    // the engine has no built-in subjects, so tests supply their own.
+    fn sample_subjects() -> Vec<SubjectDef> {
         let mut subjects = vec![
             SubjectDef {
-                name: "Electrical Circuit Analysis (ECA)".into(),
-                keywords: vec!["network theorems".into(), "kirchhoff".into()],
+                name: "Home Cooking (HC)".into(),
+                keywords: vec!["pasta sauce".into(), "sourdough".into()],
                 enabled: true,
             },
             SubjectDef {
-                name: "Digital System Design (DSD)".into(),
-                keywords: vec!["digital circuits".into(), "mealy".into()],
+                name: "Personal Finance (PF)".into(),
+                keywords: vec!["tax return".into(), "deductions".into(), "invoice".into()],
                 enabled: true,
             },
             SubjectDef {
-                name: "Organic Chemistry".into(),
-                keywords: vec!["alkanes".into(), "NMR".into(), "spectroscopy".into()],
+                name: "Travel Planning".into(),
+                keywords: vec!["itinerary".into(), "boarding pass".into(), "hotel booking".into()],
                 enabled: true,
             },
             SubjectDef {
@@ -800,98 +938,121 @@ mod tests {
         subjects
     }
 
+    fn classify(name: &str, subjects: &[SubjectDef]) -> String {
+        classify_subject_opts(&PathBuf::from(name), subjects, false)
+    }
+
     #[test]
-    fn bm25_matches_user_name_and_keywords() {
-        let subjects = user_subjects();
-        assert_eq!(
-            classify_subject_opts(&PathBuf::from("ECA_network_theorems.pdf"), &subjects, false),
-            "Electrical Circuit Analysis (ECA)"
-        );
-        assert_eq!(
-            classify_subject_opts(&PathBuf::from("dsd labmanual.pdf"), &subjects, false),
-            "Digital System Design (DSD)"
-        );
-        assert_eq!(
-            classify_subject_opts(&PathBuf::from("NMR_lab_report.pdf"), &subjects, false),
-            "Organic Chemistry"
-        );
-        assert_eq!(
-            classify_subject_opts(&PathBuf::from("vacation.zip"), &subjects, false),
-            "General"
-        );
+    fn bm25_matches_name_and_keywords() {
+        let s = sample_subjects();
+        assert_eq!(classify("HC_pasta_sauce.pdf", &s), "Home Cooking (HC)");
+        assert_eq!(classify("pf tax return 2025.pdf", &s), "Personal Finance (PF)");
+        assert_eq!(classify("Tokyo itinerary.docx", &s), "Travel Planning");
+        assert_eq!(classify("holiday.zip", &s), "General");
     }
 
     #[test]
     fn fuzzy_and_concatenated_tokens() {
-        let subjects = user_subjects();
-        // Soft match spectroscopy ≈ spectroscop (typo / stem)
-        assert_eq!(
-            classify_subject_opts(
-                &PathBuf::from("organic_spectroscopy_notes.pdf"),
-                &subjects,
-                false
-            ),
-            "Organic Chemistry"
-        );
-        // Dictionary split: "networktheorems" using user keywords
-        assert_eq!(
-            classify_subject_opts(&PathBuf::from("networktheorems.pdf"), &subjects, false),
-            "Electrical Circuit Analysis (ECA)"
-        );
+        let s = sample_subjects();
+        // Dictionary split of a concatenated name using the user's own keywords
+        assert_eq!(classify("hotelbooking.pdf", &s), "Travel Planning");
+        assert_eq!(classify("sourdough_starter_notes.pdf", &s), "Home Cooking (HC)");
+    }
+
+    #[test]
+    fn generic_words_are_not_hardcoded_as_noise() {
+        // "report" is meaningful if a user says so — no built-in list may ignore it.
+        let mut s = vec![
+            SubjectDef {
+                name: "Quarterly Reports".into(),
+                keywords: vec!["report".into(), "quarterly".into()],
+                enabled: true,
+            },
+            SubjectDef {
+                name: "Photos".into(),
+                keywords: vec!["camera".into(), "raw".into()],
+                enabled: true,
+            },
+        ];
+        enrich_all(&mut s);
+        assert_eq!(classify("q3 report final.pdf", &s), "Quarterly Reports");
     }
 
     #[test]
     fn enrich_preserves_user_phrases_and_adds_needles() {
-        let long = "electrical machinery lecture notes, three phase transformer, induction motor";
+        let long = "weekly meal prep plan, slow cooker stew, bread baking";
         let mut subjects = vec![SubjectDef {
-            name: "Electrical Machinery".into(),
-            keywords: long
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect(),
+            name: "Kitchen".into(),
+            keywords: long.split(',').map(|s| s.trim().to_string()).collect(),
             enabled: true,
         }];
         enrich_all(&mut subjects);
         let kws = &subjects[0].keywords;
-        // User phrases kept at the front
-        assert_eq!(&kws[0], "electrical machinery lecture notes");
-        assert_eq!(&kws[1], "three phase transformer");
-        assert_eq!(&kws[2], "induction motor");
-        // Derived needles added (e.g. tokens from those phrases)
-        assert!(kws.iter().any(|k| k == "transformer" || k == "induction"));
+        assert_eq!(&kws[0], "weekly meal prep plan");
+        assert_eq!(&kws[1], "slow cooker stew");
+        assert_eq!(&kws[2], "bread baking");
+        assert!(kws.iter().any(|k| k == "stew" || k == "bread"));
         assert!(kws.len() > 3);
-        // Auto-derived 2-letter noise must not appear
         assert!(!kws.iter().any(|k| k.len() <= 2));
     }
 
     #[test]
     fn index_reused_matches_oneshot() {
-        let subjects = user_subjects();
-        let index = SubjectIndex::build(&subjects);
-        let path = PathBuf::from("Correcting-a-Mealy-Machine.pdf");
+        let s = sample_subjects();
+        let index = SubjectIndex::build(&s);
+        let path = PathBuf::from("Hotel-Booking-Confirmation.pdf");
         assert_eq!(
-            classify_with_index(&path, &index, &subjects, false),
-            classify_subject_opts(&path, &subjects, false)
+            classify_with_index(&path, &index, &s, false, false),
+            classify_subject_opts(&path, &s, false)
         );
+    }
+
+    #[test]
+    fn cleans_list_numbering_and_junk_fragments() {
+        assert_eq!(clean_subject_name("1\\. Home Cooking (HC)"), "Home Cooking (HC)");
+        assert_eq!(clean_subject_name("**2)** Travel"), "Travel");
+        assert_eq!(clean_subject_name("3D Printing"), "3D Printing");
+        assert_eq!(clean_subject_name("2-pole motors"), "2-pole motors");
+        let mut s = SubjectDef {
+            name: "1\\. Home Cooking (HC)".into(),
+            keywords: vec![
+                "1\\. home cooking (hc)".into(),
+                "Quick weeknight pasta dinners".into(),
+                "1 home".into(),
+                "1hcc".into(),
+                "qwpd".into(),
+                "wpd".into(),
+                "hc".into(),
+                "BBQ".into(),
+            ],
+            enabled: true,
+        };
+        enrich_subject(&mut s);
+        assert_eq!(s.name, "Home Cooking (HC)");
+        for bad in ["1 home", "1hcc", "wpd", "1 home cooking hc"] {
+            assert!(!s.keywords.iter().any(|k| k == bad), "{bad} survived: {:?}", s.keywords);
+        }
+        assert!(s.keywords.iter().any(|k| k == "BBQ"));
+        assert!(s.keywords.iter().any(|k| k == "hc"));
     }
 
     #[test]
     fn huge_keyword_list_does_not_steal_everything() {
         let mut flooded: Vec<String> = (0..250)
-            .map(|i| format!("electrical machinery topic number {i} notes lab tutorial"))
+            .map(|i| format!("kitchen recipe number {i} notes tips guide"))
             .collect();
-        flooded.push("three phase induction motor torque slip".into());
-        flooded.push("transformer open circuit test".into());
+        flooded.push("slow braised short ribs".into());
+        flooded.push("sourdough starter feeding".into());
 
         let mut subjects = vec![
             SubjectDef {
-                name: "Electrical Machinery".into(),
+                name: "Kitchen".into(),
                 keywords: flooded,
                 enabled: true,
             },
             SubjectDef {
-                name: "Digital System Design (DSD)".into(),
-                keywords: vec!["digital circuits".into(), "mealy".into(), "dsd".into()],
+                name: "Personal Finance (PF)".into(),
+                keywords: vec!["tax return".into(), "deductions".into(), "pf".into()],
                 enabled: true,
             },
             SubjectDef {
@@ -902,24 +1063,8 @@ mod tests {
         ];
         enrich_all(&mut subjects);
 
-        // Clear DSD signal still wins
-        assert_eq!(
-            classify_subject_opts(&PathBuf::from("dsd_mealy_labmanual.pdf"), &subjects, false),
-            "Digital System Design (DSD)"
-        );
-        // Generic lab notes alone → General (not vacuumed into the fat subject)
-        assert_eq!(
-            classify_subject_opts(&PathBuf::from("random_lab_notes.pdf"), &subjects, false),
-            "General"
-        );
-        // Real machinery signal still matches
-        assert_eq!(
-            classify_subject_opts(
-                &PathBuf::from("Three_Phase_Induction_Motor_Torque_Slip.pdf"),
-                &subjects,
-                false
-            ),
-            "Electrical Machinery"
-        );
+        assert_eq!(classify("pf_tax_return_summary.pdf", &subjects), "Personal Finance (PF)");
+        assert_eq!(classify("random_tips_guide.pdf", &subjects), "General");
+        assert_eq!(classify("Slow_Braised_Short_Ribs.pdf", &subjects), "Kitchen");
     }
 }

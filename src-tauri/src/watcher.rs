@@ -244,7 +244,7 @@ fn process_new_file(app: &AppHandle, path: &Path) {
     }
 
     // Never auto-move: propose and wait for user confirmation.
-    match mover::plan_move_opts(path, &cfg, true) {
+    match mover::plan_move_opts(path, &cfg, true, true) {
         Ok(planned) => {
             crate::pending::upsert(crate::organize_existing::PreviewItem {
                 source: planned.source.to_string_lossy().to_string(),

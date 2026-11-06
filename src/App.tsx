@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { getVersion } from "@tauri-apps/api/app";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type {
   AppConfig,
@@ -13,6 +14,8 @@ import type {
   RulesDto,
   TabId,
 } from "./types";
+import Onboarding, { type FinishOptions } from "./Onboarding";
+import { FolderIcon, UndoIcon, errText, folderName, formatTime, plural, shortPath } from "./util";
 import "./App.css";
 
 type TreeNode = {
@@ -41,17 +44,17 @@ function buildPreviewTree(items: PreviewItem[]): TreeNode {
   return root;
 }
 
-function PreviewTree({ items }: { items: PreviewItem[] }) {
+function PreviewTree({ items, rootName }: { items: PreviewItem[]; rootName: string }) {
   const tree = buildPreviewTree(items);
   const subjects = Object.values(tree.children).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
   if (subjects.length === 0) {
-    return <p className="muted">Nothing selected.</p>;
+    return <p className="muted">Tick some files to see where they&rsquo;ll go.</p>;
   }
   return (
     <div className="folder-tree" aria-label="Proposed folder layout">
-      <div className="tree-root">Destination/</div>
+      <div className="tree-root">{rootName}/</div>
       {subjects.map((subject) => (
         <div key={subject.name} className="tree-subject">
           <div className="tree-folder">{subject.name}/</div>
@@ -73,16 +76,34 @@ function PreviewTree({ items }: { items: PreviewItem[] }) {
   );
 }
 
-const IMPORT_PLACEHOLDER = `Paste your courses, syllabus, or folder tree. Examples:
+const IMPORT_EXAMPLE = `1. Calculus: limits, derivatives, integrals, series
+2. Organic Chemistry - alkanes, reaction mechanisms, spectroscopy
+3. Data Structures: linked list, binary tree, hashing, graphs
+4. World History`;
 
-1. Power Systems: load flow, transmission, fault
-2. Control Systems - pid, bode, root locus
-3. Electrical Machines
+const IMPORT_PLACEHOLDER = `Paste your courses, syllabus, or folder tree. One course per line works best.
 
-Or:
-Power Systems/
-Control Systems/
-Digital Electronics/`;
+1. Calculus: limits, derivatives, integrals
+2. Organic Chemistry - alkanes, reaction mechanisms
+3. World History
+
+Or a folder list:
+Calculus/
+Organic Chemistry/`;
+
+const TABS: ReadonlyArray<readonly [TabId, string]> = [
+  ["home", "Home"],
+  ["import", "Import"],
+  ["rules", "Rules"],
+  ["settings", "Settings"],
+];
+
+const FILE_MANAGER = /Mac/i.test(navigator.userAgent)
+  ? "Finder"
+  : /Win/i.test(navigator.userAgent)
+    ? "Explorer"
+    : "file manager";
+const MOD_KEY = /Mac/i.test(navigator.userAgent) ? "⌘" : "Ctrl+";
 
 interface ProposalDraft {
   name: string;
@@ -103,351 +124,16 @@ function fromDrafts(list: ProposalDraft[]): ProposedSubject[] {
     .filter((d) => d.name.trim())
     .map((d) => ({
       name: d.name.trim(),
-      keywords: d.keywordsText
-        .split(",")
-        .map((k) => k.trim())
-        .filter(Boolean),
+      keywords: splitKeywords(d.keywordsText),
       enabled: d.enabled,
     }));
 }
 
-function UndoIcon() {
-  return (
-    <svg className="undo-icon" viewBox="0 0 16 16" aria-hidden>
-      <path
-        d="M5.5 3.5 2.5 6.5l3 3M3 6.5h6.25a3.75 3.75 0 0 1 0 7.5H7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function shortPath(path: string | null | undefined, max = 48): string {
-  if (!path) return "Not set";
-  if (path.length <= max) return path;
-  return "…" + path.slice(-(max - 1));
-}
-
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
-
-const ELECTRICAL_PRESET_ID = "btech-electrical";
-const ELECTRICAL_SAMPLE = [
-  "Circuit Theory",
-  "Electrical Machines",
-  "Power Systems",
-  "Control Systems",
-  "Signals and Systems",
-  "Digital Electronics",
-];
-const ONBOARDING_STEPS = ["Welcome", "Folders", "Subjects", "Ready"] as const;
-
-type SubjectChoice = "preset" | "later";
-
-interface OnboardingProps {
-  config: AppConfig;
-  busy: boolean;
-  error: string | null;
-  onPickFolder: (field: "watchFolder" | "destinationFolder") => void;
-  onLoadPreset: () => Promise<boolean>;
-  onFinish: (opts: { startMonitoring: boolean; openImport: boolean }) => void;
-}
-
-function Onboarding({
-  config,
-  busy,
-  error,
-  onPickFolder,
-  onLoadPreset,
-  onFinish,
-}: OnboardingProps) {
-  const [step, setStep] = useState(0);
-  const [choice, setChoice] = useState<SubjectChoice>("preset");
-  const [presetLoaded, setPresetLoaded] = useState(false);
-
-  const foldersReady = Boolean(config.watchFolder && config.destinationFolder);
-  const sameFolder =
-    foldersReady && config.watchFolder === config.destinationFolder;
-
-  async function continueFromSubjects() {
-    if (choice === "preset" && !presetLoaded) {
-      const ok = await onLoadPreset();
-      if (!ok) return;
-      setPresetLoaded(true);
-    }
-    setStep(3);
-  }
-
-  return (
-    <div className="onboarding" role="dialog" aria-modal="true" aria-labelledby="ob-title">
-      <div className="ob-sheet">
-        <div className="ob-top">
-          <ol className="ob-progress" aria-label="Setup progress">
-            {ONBOARDING_STEPS.map((label, i) => (
-              <li
-                key={label}
-                className={i < step ? "done" : i === step ? "current" : ""}
-                aria-current={i === step ? "step" : undefined}
-              >
-                <span className="ob-progress-bar" aria-hidden />
-                <span className="ob-progress-label">{label}</span>
-              </li>
-            ))}
-          </ol>
-          {step < 3 && (
-            <button
-              type="button"
-              className="text-btn ob-skip"
-              disabled={busy}
-              onClick={() => onFinish({ startMonitoring: false, openImport: false })}
-            >
-              Skip setup
-            </button>
-          )}
-        </div>
-
-        <div className="ob-body" key={step}>
-          {step === 0 && (
-            <>
-              <h1 id="ob-title" className="ob-wordmark">
-                Tidy
-                <span className="pulse on" aria-hidden />
-              </h1>
-              <p className="ob-lede">
-                Tidy files new downloads into <strong>Subject / Type</strong> folders.
-                It runs entirely on this device and shows you every move before it
-                happens.
-              </p>
-              <ul className="ob-points">
-                <li>Watches one folder, waits for downloads to finish</li>
-                <li>Matches course subjects by filename and document text</li>
-                <li>Nothing moves until you confirm — and batches can be reverted</li>
-              </ul>
-            </>
-          )}
-
-          {step === 1 && (
-            <>
-              <span className="eyebrow">Step 2 of 4</span>
-              <h2 id="ob-title">Where should Tidy look, and where should files go?</h2>
-              <div className="ob-folders">
-                <div className="ob-folder">
-                  <div>
-                    <strong>Watch folder</strong>
-                    <p className="muted">New files appear here — usually Downloads.</p>
-                    <p
-                      className={`mono ob-path ${config.watchFolder ? "" : "unset"}`}
-                      title={config.watchFolder ?? undefined}
-                    >
-                      {shortPath(config.watchFolder, 52)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => onPickFolder("watchFolder")}
-                  >
-                    {config.watchFolder ? "Change…" : "Choose…"}
-                  </button>
-                </div>
-                <span className="ob-folder-arrow" aria-hidden />
-                <div className="ob-folder">
-                  <div>
-                    <strong>Destination</strong>
-                    <p className="muted">Sorted files land in subfolders here.</p>
-                    <p
-                      className={`mono ob-path ${config.destinationFolder ? "" : "unset"}`}
-                      title={config.destinationFolder ?? undefined}
-                    >
-                      {shortPath(config.destinationFolder, 52)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className={config.destinationFolder ? "secondary" : "primary-toggle start ob-choose"}
-                    onClick={() => onPickFolder("destinationFolder")}
-                  >
-                    {config.destinationFolder ? "Change…" : "Choose…"}
-                  </button>
-                </div>
-              </div>
-              {sameFolder && (
-                <p className="ob-warn" role="status">
-                  Watch and destination are the same folder. Pick a separate
-                  destination so sorted files aren&rsquo;t picked up again.
-                </p>
-              )}
-            </>
-          )}
-
-          {step === 2 && (
-            <>
-              <span className="eyebrow">Step 3 of 4</span>
-              <h2 id="ob-title">Which subjects should Tidy sort into?</h2>
-              <div className="ob-choices" role="radiogroup" aria-label="Subjects">
-                <label className={`ob-choice ${choice === "preset" ? "on" : ""}`}>
-                  <input
-                    type="radio"
-                    name="ob-subjects"
-                    checked={choice === "preset"}
-                    onChange={() => setChoice("preset")}
-                  />
-                  <span>
-                    <strong>Load B.Tech Electrical preset</strong>
-                    <small>13 subjects with keywords, ready to use.</small>
-                    <span className="ob-chips" aria-hidden>
-                      {ELECTRICAL_SAMPLE.map((s) => (
-                        <i key={s}>{s}</i>
-                      ))}
-                      <i className="more">+7</i>
-                    </span>
-                  </span>
-                </label>
-                <label className={`ob-choice ${choice === "later" ? "on" : ""}`}>
-                  <input
-                    type="radio"
-                    name="ob-subjects"
-                    checked={choice === "later"}
-                    onChange={() => setChoice("later")}
-                  />
-                  <span>
-                    <strong>Import my own later</strong>
-                    <small>
-                      Keep the general starter subjects for now. Paste a syllabus
-                      in the Import tab whenever you&rsquo;re ready.
-                    </small>
-                  </span>
-                </label>
-              </div>
-            </>
-          )}
-
-          {step === 3 && (
-            <>
-              <span className="eyebrow">All set</span>
-              <h2 id="ob-title">Tidy is ready.</h2>
-              <p className="ob-lede">
-                While monitoring, each finished download is matched to a subject and
-                held for review. You&rsquo;ll get a confirm window with the proposed
-                folder tree — <strong>nothing moves until you confirm</strong>.
-              </p>
-              <div className="ob-summary">
-                <div>
-                  <span className="eyebrow">Watching</span>
-                  <p className="mono" title={config.watchFolder ?? undefined}>
-                    {shortPath(config.watchFolder, 40)}
-                  </p>
-                </div>
-                <div>
-                  <span className="eyebrow">Destination</span>
-                  <p className="mono" title={config.destinationFolder ?? undefined}>
-                    {shortPath(config.destinationFolder, 40)}
-                  </p>
-                </div>
-                <div>
-                  <span className="eyebrow">Subjects</span>
-                  <p>
-                    {config.subjects.length} subject{config.subjects.length === 1 ? "" : "s"}
-                    {presetLoaded ? " · B.Tech Electrical" : ""}
-                  </p>
-                </div>
-              </div>
-              <p className="muted">
-                Changed your mind? Undo single files or use{" "}
-                <em>Revert previous changes</em> on Home.
-              </p>
-            </>
-          )}
-        </div>
-
-        {error && (
-          <p className="ob-error" role="alert">
-            {error}
-          </p>
-        )}
-
-        <div className="ob-foot">
-          {step > 0 && step < 3 ? (
-            <button
-              type="button"
-              className="secondary"
-              disabled={busy}
-              onClick={() => setStep((s) => s - 1)}
-            >
-              Back
-            </button>
-          ) : (
-            <span />
-          )}
-
-          {step === 0 && (
-            <button type="button" className="primary-toggle start" onClick={() => setStep(1)}>
-              Get started
-            </button>
-          )}
-          {step === 1 && (
-            <div className="ob-next">
-              {!foldersReady && <span className="muted">Choose both folders to continue</span>}
-              <button
-                type="button"
-                className="primary-toggle start"
-                disabled={!foldersReady || sameFolder}
-                onClick={() => setStep(2)}
-              >
-                Continue
-              </button>
-            </div>
-          )}
-          {step === 2 && (
-            <button
-              type="button"
-              className="primary-toggle start"
-              disabled={busy}
-              onClick={continueFromSubjects}
-            >
-              {choice === "preset" && !presetLoaded ? "Load preset & continue" : "Continue"}
-            </button>
-          )}
-          {step === 3 && (
-            <div className="ob-next">
-              <button
-                type="button"
-                className="secondary"
-                disabled={busy}
-                onClick={() =>
-                  onFinish({ startMonitoring: false, openImport: choice === "later" })
-                }
-              >
-                {choice === "later" ? "Import subjects first" : "Not yet"}
-              </button>
-              <button
-                type="button"
-                className="primary-toggle start"
-                disabled={busy}
-                onClick={() => onFinish({ startMonitoring: true, openImport: false })}
-              >
-                Start monitoring
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+function splitKeywords(text: string): string[] {
+  return text
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean);
 }
 
 export default function App() {
@@ -457,6 +143,7 @@ export default function App() {
   const [history, setHistory] = useState<MoveRecord[]>([]);
   const [rules, setRules] = useState<RulesDto | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<OrganizeProgress | null>(null);
   const [preview, setPreview] = useState<PreviewItem[] | null>(null);
@@ -469,12 +156,15 @@ export default function App() {
   const [draftKeywords, setDraftKeywords] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editKeywords, setEditKeywords] = useState("");
+  const [subjectFilter, setSubjectFilter] = useState("");
   const [importText, setImportText] = useState("");
   const [importImageUrl, setImportImageUrl] = useState<string | null>(null);
   const [importImageName, setImportImageName] = useState<string | null>(null);
   const [proposals, setProposals] = useState<ProposalDraft[] | null>(null);
   const [proposedFrom, setProposedFrom] = useState("");
   const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
+  const [version, setVersion] = useState<string | null>(null);
+  const [rerun, setRerun] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -489,7 +179,7 @@ export default function App() {
       setHistory(hist);
       setCanRevert(revert);
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     }
   }, []);
 
@@ -497,17 +187,39 @@ export default function App() {
     try {
       setRules(await invoke<RulesDto>("get_rules"));
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     }
   }, []);
 
   useEffect(() => {
     refresh();
+    getVersion().then(setVersion).catch(() => {});
+    // Downloads that finished while the window was closed are still waiting for review.
+    invoke<PreviewItem[]>("get_pending")
+      .then((items) => {
+        if (items.length === 0) return;
+        setPreviewKind("pending");
+        setPreview(items);
+        setSelected(new Set(items.map((i) => i.source)));
+      })
+      .catch(() => {});
+  }, [refresh]);
+
+  useEffect(() => {
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [refresh]);
 
   useEffect(() => {
     if (tab === "rules") refreshRules();
   }, [tab, refreshRules]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
@@ -559,7 +271,7 @@ export default function App() {
       setStatus(next);
       await refresh();
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
     }
@@ -567,18 +279,22 @@ export default function App() {
 
   async function pickFolder(field: "watchFolder" | "destinationFolder") {
     if (!config) return;
-    const selectedPath = await open({ directory: true, multiple: false });
+    const selectedPath = await open({
+      directory: true,
+      multiple: false,
+      canCreateDirectories: true,
+      defaultPath: config[field] ?? config.watchFolder ?? undefined,
+      title: field === "watchFolder" ? "Choose the folder Tidy should watch" : "Choose where sorted files go",
+    });
     if (!selectedPath || Array.isArray(selectedPath)) return;
-    const next = {
-      ...config,
-      [field]: selectedPath,
-    };
     try {
-      const saved = await invoke<AppConfig>("save_config", { newConfig: next });
+      const saved = await invoke<AppConfig>("save_config", {
+        newConfig: { ...config, [field]: selectedPath },
+      });
       setConfig(saved);
       setStatus(await invoke<MonitorStatus>("get_monitor_status"));
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     }
   }
 
@@ -591,30 +307,45 @@ export default function App() {
       setConfig(saved);
       setStatus(await invoke<MonitorStatus>("get_monitor_status"));
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     }
   }
 
-  async function undo(id: string) {
+  async function undo(item: MoveRecord) {
     setError(null);
     try {
-      await invoke("undo_move", { id });
+      await invoke("undo_move", { id: item.id });
+      setNotice(`Moved ${item.filename} back`);
       await refresh();
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     }
   }
 
   async function revertPreviousChanges() {
+    const ok = await ask(
+      "Move every file from the most recent batch back to where it came from?",
+      { title: "Revert last batch", kind: "warning", okLabel: "Revert", cancelLabel: "Cancel" },
+    );
+    if (!ok) return;
     setError(null);
     setBusy(true);
     try {
-      await invoke("revert_previous_changes");
+      const undone = await invoke<MoveRecord[]>("revert_previous_changes");
+      setNotice(`Moved ${plural(undone.length, "file")} back`);
       await refresh();
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function revealPath(path: string) {
+    try {
+      await revealItemInDir(path);
+    } catch (e) {
+      setError(errText(e));
     }
   }
 
@@ -628,7 +359,7 @@ export default function App() {
       setProposals(toDrafts(next));
       setProposedFrom(importText);
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
       setProposals(null);
     } finally {
       setBusy(false);
@@ -642,6 +373,14 @@ export default function App() {
   async function confirmImport() {
     const subjects = fromDrafts(proposals ?? []);
     if (!subjects.length) return;
+    const existing = config?.subjects.length ?? 0;
+    if (importMode === "replace" && existing > 0) {
+      const ok = await ask(
+        `Your ${plural(existing, "current subject")} will be replaced by ${plural(subjects.length, "new one")}. Files already sorted are not moved.`,
+        { title: "Replace subjects?", kind: "warning", okLabel: "Replace", cancelLabel: "Cancel" },
+      );
+      if (!ok) return;
+    }
     setError(null);
     setBusy(true);
     try {
@@ -653,9 +392,14 @@ export default function App() {
       setProposals(null);
       setProposedFrom("");
       setTab("rules");
+      setNotice(
+        importMode === "replace"
+          ? `Now sorting into ${plural(subjects.length, "subject")}`
+          : `Merged ${plural(subjects.length, "subject")}`,
+      );
       await refreshRules();
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
     }
@@ -678,7 +422,7 @@ export default function App() {
       const text = await file.text();
       setImportText((prev) => (prev ? `${prev.trim()}\n\n${text}` : text));
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     }
   }
 
@@ -692,7 +436,7 @@ export default function App() {
       setPreview(items);
       setSelected(new Set(items.map((i) => i.source)));
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -709,7 +453,7 @@ export default function App() {
       setPreview(items);
       setSelected(new Set(items.map((i) => i.source)));
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -722,19 +466,22 @@ export default function App() {
     setError(null);
     setProgress({ phase: "moving", current: 0, total: selected.size, filename: "" });
     try {
-      const sources = preview.filter((p) => selected.has(p.source)).map((p) => p.source);
-      await invoke("apply_existing", { sources });
+      const chosen = preview.filter((p) => selected.has(p.source));
+      const sources = chosen.map((p) => p.source);
+      const subjects = Object.fromEntries(chosen.map((p) => [p.source, p.subject]));
+      const moved = await invoke<MoveRecord[]>("apply_existing", { sources, subjects });
       setPreview(null);
+      setNotice(`Filed ${plural(moved.length, "file")} · Undo is available below`);
       await refresh();
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
       setProgress(null);
     }
   }
 
-  async function dismissPreview() {
+  const dismissPreview = useCallback(async () => {
     if (previewKind === "pending" && preview) {
       try {
         await invoke("dismiss_pending", {
@@ -745,7 +492,7 @@ export default function App() {
       }
     }
     setPreview(null);
-  }
+  }, [preview, previewKind]);
 
   async function toggleSubject(name: string, enabled: boolean) {
     try {
@@ -756,73 +503,97 @@ export default function App() {
       setConfig(cfg);
       await refreshRules();
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     }
   }
 
-  async function applyPreset(presetId: string) {
+  async function applyPreset(presetId: string, label: string) {
+    const count = config?.subjects.length ?? 0;
+    if (count > 0) {
+      const ok = await ask(
+        `Replace your ${plural(count, "subject")} with “${label}”? Any keywords you added will be lost. Files already sorted are not moved.`,
+        { title: "Load starter set", kind: "warning", okLabel: "Replace", cancelLabel: "Cancel" },
+      );
+      if (!ok) return;
+    }
     setError(null);
     try {
       const cfg = await invoke<AppConfig>("apply_subject_preset", { presetId });
       setConfig(cfg);
+      setNotice(`Loaded ${label}`);
       await refreshRules();
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     }
   }
 
-  async function saveSubject(name: string, keywordsText: string) {
+  async function saveSubject(name: string, keywordsText: string): Promise<boolean> {
     setError(null);
-    const keywords = keywordsText
-      .split(",")
-      .map((k) => k.trim())
-      .filter(Boolean);
     try {
-      const cfg = await invoke<AppConfig>("upsert_subject", { name, keywords });
+      const cfg = await invoke<AppConfig>("upsert_subject", {
+        name,
+        keywords: splitKeywords(keywordsText),
+      });
       setConfig(cfg);
+      setNotice(`Saved ${name}`);
       await refreshRules();
+      return true;
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
+      return false;
     }
   }
 
   async function removeSubject(name: string) {
+    const ok = await ask(
+      `Remove “${name}”? New files that would have matched it will go to General instead. Files already sorted stay where they are.`,
+      { title: "Remove subject", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" },
+    );
+    if (!ok) return;
     setError(null);
     try {
       const cfg = await invoke<AppConfig>("delete_subject", { name });
       setConfig(cfg);
+      setNotice(`Removed ${name}`);
       await refreshRules();
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     }
   }
 
-  async function loadOnboardingPreset(): Promise<boolean> {
+  async function addOnboardingSubjects(text: string): Promise<boolean> {
     setError(null);
     setBusy(true);
     try {
-      const cfg = await invoke<AppConfig>("apply_subject_preset", {
-        presetId: ELECTRICAL_PRESET_ID,
+      const subjects = await invoke<ProposedSubject[]>("propose_subjects_from_text", { text });
+      const cfg = await invoke<AppConfig>("confirm_proposed_subjects", {
+        subjects,
+        mode: "merge",
       });
       setConfig(cfg);
       return true;
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
       return false;
     } finally {
       setBusy(false);
     }
   }
 
-  async function finishOnboarding(opts: { startMonitoring: boolean; openImport: boolean }) {
+  async function finishOnboarding(opts: FinishOptions) {
     if (!config) return;
     setError(null);
     setBusy(true);
     try {
       const saved = await invoke<AppConfig>("save_config", {
-        newConfig: { ...config, onboardingComplete: true },
+        newConfig: {
+          ...config,
+          onboardingComplete: true,
+          monitorOnLaunch: opts.monitorOnLaunch,
+        },
       });
       setConfig(saved);
+      setRerun(false);
       setTab(opts.openImport ? "import" : "home");
       const current = await invoke<MonitorStatus>("get_monitor_status");
       setStatus(
@@ -831,23 +602,68 @@ export default function App() {
           : current,
       );
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
+      return;
     } finally {
       setBusy(false);
     }
+    if (opts.organizeExisting) await openPreview();
   }
 
-  async function revealDestination() {
-    if (!config?.destinationFolder) return;
-    try {
-      await revealItemInDir(config.destinationFolder);
-    } catch (e) {
-      setError(String(e));
-    }
+  async function rerunSetup() {
+    setRerun(true);
+    await updateConfig({ onboardingComplete: false });
   }
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && preview && !busy) {
+        e.preventDefault();
+        dismissPreview();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        const idx = Number(e.key) - 1;
+        if (idx >= 0 && idx < TABS.length && config?.onboardingComplete) {
+          e.preventDefault();
+          setTab(TABS[idx][0]);
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview, busy, dismissPreview, config?.onboardingComplete]);
 
   const active = status?.active ?? false;
   const readyCount = proposals ? fromDrafts(proposals).length : 0;
+  const foldersReady = Boolean(config?.watchFolder && config?.destinationFolder);
+  const watchName = folderName(config?.watchFolder) || "watch folder";
+  const destName = folderName(config?.destinationFolder) || "Destination";
+
+  const visibleSubjects = useMemo(() => {
+    const list = rules?.subjects ?? [];
+    const q = subjectFilter.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.keywords.some((k) => k.toLowerCase().includes(q)),
+    );
+  }, [rules, subjectFilter]);
+
+  const draftExists = Boolean(
+    draftName.trim() &&
+      rules?.subjects.some((s) => s.name.toLowerCase() === draftName.trim().toLowerCase()),
+  );
+
+  const previewStats = useMemo(() => {
+    if (!preview) return null;
+    const picked = preview.filter((p) => selected.has(p.source));
+    return {
+      subjects: new Set(picked.map((p) => p.subject)).size,
+      unsure: preview.filter((p) => p.subject === "General").length,
+    };
+  }, [preview, selected]);
 
   return (
     <div className="app">
@@ -857,18 +673,13 @@ export default function App() {
           <span className="brand-name">Tidy</span>
         </div>
         <nav className="tabs" aria-label="Main">
-          {(
-            [
-              ["home", "Home"],
-              ["import", "Import"],
-              ["rules", "Rules"],
-              ["settings", "Settings"],
-            ] as const
-          ).map(([id, label]) => (
+          {TABS.map(([id, label], i) => (
             <button
               key={id}
               type="button"
               className={tab === id ? "tab active" : "tab"}
+              aria-current={tab === id ? "page" : undefined}
+              title={`${label} (${MOD_KEY}${i + 1})`}
               onClick={() => setTab(id)}
             >
               {label}
@@ -895,41 +706,118 @@ export default function App() {
                   Tidy
                   <span className={`pulse ${active ? "on" : "off"}`} aria-hidden />
                 </h1>
-                <p className="tagline">Downloads, sorted by subject and type.</p>
+                <p className="tagline">
+                  New files in <strong>{watchName}</strong> are filed into{" "}
+                  the <strong>{destName}</strong> folder by subject and type — after you confirm.
+                </p>
               </div>
               <div className="hero-status">
                 <p className="status-label">
                   <span className="eyebrow">Status</span>
-                  {active ? "Organizing" : "Paused"}
+                  {!foldersReady ? "Needs setup" : active ? "Watching" : "Paused"}
                 </p>
-                <p className="status-msg">{status?.message ?? "Loading…"}</p>
-                <button
-                  type="button"
-                  className={`primary-toggle ${active ? "pause" : "start"}`}
-                  onClick={toggleMonitor}
-                  disabled={busy}
-                >
-                  {active ? "Pause" : "Start organizing"}
-                </button>
+                <p className="status-msg">
+                  {!foldersReady
+                    ? "Choose a destination folder so Tidy knows where to file things."
+                    : (status?.message ?? "Loading…")}
+                </p>
+                {foldersReady ? (
+                  <button
+                    type="button"
+                    className={`primary-toggle ${active ? "pause" : "start"}`}
+                    onClick={toggleMonitor}
+                    disabled={busy}
+                  >
+                    {active ? "Pause watching" : "Start watching"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="primary-toggle start"
+                    onClick={() =>
+                      pickFolder(config?.watchFolder ? "destinationFolder" : "watchFolder")
+                    }
+                  >
+                    {config?.watchFolder ? "Choose destination…" : "Choose watch folder…"}
+                  </button>
+                )}
               </div>
             </div>
 
             <div className={`path-row ${active ? "live" : ""}`}>
-              <div className="path-end">
+              <button
+                type="button"
+                className="path-end"
+                onClick={() => pickFolder("watchFolder")}
+                title="Change watch folder"
+              >
                 <span className="eyebrow">Watching</span>
-                <p className="mono" title={config?.watchFolder ?? undefined}>
+                <span className={`mono path-val ${config?.watchFolder ? "" : "unset"}`}>
                   {shortPath(config?.watchFolder, 40)}
-                </p>
-              </div>
+                </span>
+                <span className="path-change">Change</span>
+              </button>
               <span className="path-arrow" aria-hidden>
                 <span />
               </span>
-              <div className="path-end">
-                <span className="eyebrow">Destination</span>
-                <p className="mono" title={config?.destinationFolder ?? undefined}>
+              <button
+                type="button"
+                className="path-end"
+                onClick={() => pickFolder("destinationFolder")}
+                title="Change destination folder"
+              >
+                <span className="eyebrow">Filing into</span>
+                <span className={`mono path-val ${config?.destinationFolder ? "" : "unset"}`}>
                   {shortPath(config?.destinationFolder, 40)}
-                </p>
+                </span>
+                <span className="path-change">Change</span>
+              </button>
+            </div>
+
+            {config && config.subjects.length === 0 && (
+              <div className="callout">
+                <div>
+                  <strong>Add your subjects to get folders like Calculus/Documents</strong>
+                  <p className="muted">
+                    Without subjects, everything is sorted by type inside General.
+                  </p>
+                </div>
+                <button type="button" className="secondary" onClick={() => setTab("import")}>
+                  Import courses…
+                </button>
               </div>
+            )}
+
+            <div className="quick-actions">
+              <button
+                type="button"
+                className="action-card"
+                onClick={openPreview}
+                disabled={busy || !foldersReady}
+              >
+                <strong>Tidy up {watchName} now</strong>
+                <span>Sort files that are already there. You review every move first.</span>
+              </button>
+              <button
+                type="button"
+                className="action-card"
+                onClick={openReorganize}
+                disabled={busy || !config?.destinationFolder}
+              >
+                <strong>Fix mis-sorted files</strong>
+                <span>Re-check files in the {destName} folder against your current subjects.</span>
+              </button>
+              <button
+                type="button"
+                className="action-card"
+                onClick={() => config?.destinationFolder && revealPath(config.destinationFolder)}
+                disabled={!config?.destinationFolder}
+              >
+                <strong>
+                  <FolderIcon /> Open {destName}
+                </strong>
+                <span>Browse your sorted folders in {FILE_MANAGER}.</span>
+              </button>
             </div>
 
             <div className="panel-head">
@@ -937,39 +825,34 @@ export default function App() {
                 Recent activity
                 {history.length > 0 && <span className="count">{history.length}</span>}
               </h2>
-              <div className="btn-row">
-                <button
-                  type="button"
-                  className="undo-btn last"
-                  onClick={revertPreviousChanges}
-                  disabled={busy || !canRevert}
-                  title={
-                    canRevert
-                      ? "Move the last confirmed organize batch back to Downloads"
-                      : "Nothing to revert yet"
-                  }
-                >
-                  <UndoIcon />
-                  Revert previous changes
-                </button>
-                <button type="button" className="secondary" onClick={openPreview} disabled={busy}>
-                  Organize Existing Files…
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={openReorganize}
-                  disabled={busy || !config?.destinationFolder}
-                  title="Re-classify files already in the destination using improved matching"
-                >
-                  Re-organize Sorted Files…
-                </button>
-              </div>
+              <button
+                type="button"
+                className="undo-btn last"
+                onClick={revertPreviousChanges}
+                disabled={busy || !canRevert}
+                title={
+                  canRevert
+                    ? "Move every file from the most recent batch back"
+                    : "Nothing to revert yet"
+                }
+              >
+                <UndoIcon />
+                Revert last batch
+              </button>
             </div>
 
             <ul className="activity">
               {history.length === 0 && (
-                <li className="empty">No moves yet. New downloads will appear here.</li>
+                <li className="empty">
+                  <strong>Nothing filed yet</strong>
+                  <span>
+                    {active
+                      ? `Tidy is watching ${watchName}. When a download finishes you'll be asked to confirm where it goes.`
+                      : foldersReady
+                        ? "Press Start watching, or tidy up the files already in your watch folder."
+                        : "Finish choosing your folders above to get started."}
+                  </span>
+                </li>
               )}
               {history.map((item) => (
                 <li key={item.id} className={item.undone ? "undone" : ""}>
@@ -984,19 +867,30 @@ export default function App() {
                       {item.fileType}
                     </span>
                   </div>
-                  {!item.undone && (
-                    <button
-                      type="button"
-                      className="undo-btn"
-                      onClick={() => undo(item.id)}
-                      disabled={busy}
-                      aria-label={`Undo move of ${item.filename}`}
-                    >
-                      <UndoIcon />
-                      Undo
-                    </button>
+                  {!item.undone ? (
+                    <div className="activity-btns">
+                      <button
+                        type="button"
+                        className="text-btn"
+                        onClick={() => revealPath(item.destination)}
+                        aria-label={`Show ${item.filename} in ${FILE_MANAGER}`}
+                      >
+                        Show
+                      </button>
+                      <button
+                        type="button"
+                        className="undo-btn"
+                        onClick={() => undo(item)}
+                        disabled={busy}
+                        aria-label={`Undo move of ${item.filename}`}
+                      >
+                        <UndoIcon />
+                        Undo
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="badge">Undone</span>
                   )}
-                  {item.undone && <span className="badge">Undone</span>}
                 </li>
               ))}
             </ul>
@@ -1007,8 +901,9 @@ export default function App() {
           <section className="import-screen">
             <h2>Import subjects</h2>
             <p className="muted intro">
-              Paste a course list and Tidy proposes subject rules for you to review —
-              parsed on this device, applied only when you confirm.
+              Paste your course list or syllabus and Tidy proposes a subject for each course,
+              with keywords to match. It&rsquo;s parsed on this device, and nothing changes until
+              you review and apply.
             </p>
 
             <ol className="import-steps">
@@ -1020,7 +915,19 @@ export default function App() {
                   <h3>
                     <label htmlFor="import-prompt">Describe your courses</label>
                   </h3>
-                  {proposals && <span className="step-state">Proposed</span>}
+                  {proposals ? (
+                    <span className="step-state">Proposed</span>
+                  ) : (
+                    !importText && (
+                      <button
+                        type="button"
+                        className="text-btn step-aside"
+                        onClick={() => setImportText(IMPORT_EXAMPLE)}
+                      >
+                        Try an example
+                      </button>
+                    )
+                  )}
                 </div>
 
                 <div className={`import-grid ${importImageUrl ? "has-ref" : ""}`}>
@@ -1030,10 +937,20 @@ export default function App() {
                       className="import-textarea"
                       value={importText}
                       onChange={(e) => setImportText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && importText.trim()) {
+                          e.preventDefault();
+                          runImportPropose();
+                        }
+                      }}
                       placeholder={IMPORT_PLACEHOLDER}
                       rows={11}
                       spellCheck={false}
                     />
+                    <p className="hint import-tip">
+                      Tip: add topics after a colon — <span className="mono">Calculus: limits, derivatives</span>{" "}
+                      — so Tidy recognises more of your files.
+                    </p>
                     <div className="import-actions">
                       <div className="import-attach">
                         <span className="attach-label">Add from file</span>
@@ -1067,8 +984,9 @@ export default function App() {
                         className={`primary-toggle ${proposals ? "pause" : "start"}`}
                         disabled={busy || !importText.trim()}
                         onClick={runImportPropose}
+                        title={`${MOD_KEY}Enter`}
                       >
-                        {proposals ? "Propose again" : "Propose rules"}
+                        {proposals ? "Propose again" : "Propose subjects"}
                       </button>
                     </div>
                   </div>
@@ -1092,7 +1010,7 @@ export default function App() {
                           Remove
                         </button>
                         <span className="import-ref-note">
-                          For reference only. Tidy reads the text box, not the image.
+                          For reference while you type. Tidy reads the text box, not the image.
                         </span>
                       </figcaption>
                     </figure>
@@ -1107,15 +1025,13 @@ export default function App() {
                   </span>
                   <h3>Review and apply</h3>
                   {proposals && proposals.length > 0 && (
-                    <span className="step-state">
-                      {proposals.length} subject{proposals.length === 1 ? "" : "s"}
-                    </span>
+                    <span className="step-state">{plural(proposals.length, "subject")}</span>
                   )}
                 </div>
 
                 {!proposals && (
                   <p className="step-placeholder">
-                    Proposed subjects appear here. Rename, edit keywords, or drop any
+                    Proposed subjects appear here. Rename them, edit keywords, or remove any
                     before they become rules.
                   </p>
                 )}
@@ -1188,7 +1104,7 @@ export default function App() {
                         ])
                       }
                     >
-                      Add a subject
+                      + Add a subject
                     </button>
 
                     <fieldset className="import-mode">
@@ -1204,9 +1120,7 @@ export default function App() {
                           <strong>Replace</strong>
                           <small>
                             {config?.subjects.length
-                              ? `Your ${config.subjects.length} current subject${
-                                  config.subjects.length === 1 ? "" : "s"
-                                } will be removed.`
+                              ? `Your ${plural(config.subjects.length, "current subject")} will be removed.`
                               : "Use only these subjects."}
                           </small>
                         </span>
@@ -1242,8 +1156,8 @@ export default function App() {
                         disabled={busy || readyCount === 0}
                         onClick={confirmImport}
                       >
-                        {importMode === "replace" ? "Replace with" : "Merge in"} {readyCount}{" "}
-                        subject{readyCount === 1 ? "" : "s"}
+                        {importMode === "replace" ? "Replace with" : "Merge in"}{" "}
+                        {plural(readyCount, "subject")}
                       </button>
                     </div>
                   </div>
@@ -1255,53 +1169,60 @@ export default function App() {
 
         {tab === "rules" && (
           <section className="rules">
-            <h2>File types</h2>
-            <p className="muted intro">
-              Extensions map to type folders under each subject.
-            </p>
-            <div className="rule-grid">
-              {(rules?.typeRules ?? []).map((rule) => (
-                <div key={rule.folder} className="rule-card">
-                  <strong>{rule.folder}</strong>
-                  <span className="ext">{rule.extensions.map((x) => `.${x}`).join("  ")}</span>
-                </div>
-              ))}
-              <div className="rule-card other">
-                <strong>Other</strong>
-                <span className="ext">anything unrecognised</span>
-              </div>
+            <div className="section-head">
+              <h2>Subjects</h2>
+              {(rules?.subjects.length ?? 0) > 6 && (
+                <input
+                  type="search"
+                  className="filter-input"
+                  placeholder="Filter subjects or keywords"
+                  value={subjectFilter}
+                  onChange={(e) => setSubjectFilter(e.target.value)}
+                  aria-label="Filter subjects"
+                />
+              )}
             </div>
-
-            <h2>Subjects</h2>
             <p className="muted intro">
-              Files land in Destination / Subject / Type. Match is by keywords in
-              the filename (and document text for live monitoring). Uncertain →
-              General.
+              Each subject is a folder in {destName}. Tidy compares a file&rsquo;s name — and the
+              text inside PDFs, Word and text files — against each subject&rsquo;s keywords. A
+              file named <span className="mono">limits_worksheet_3.pdf</span> matches a subject
+              with the keyword &ldquo;limits&rdquo;. When nothing is a clear match it goes to{" "}
+              <strong>General</strong>.
             </p>
 
             <div className="preset-row">
-              <span className="muted">Load a starter set</span>
+              <span className="muted">
+                {(rules?.subjects.length ?? 0) === 0
+                  ? "No subjects yet — every file goes to General until you add some."
+                  : "Have a syllabus? Turn it into subjects in one go."}
+              </span>
               <div className="btn-row">
                 {(rules?.presets ?? []).map((p) => (
                   <button
                     key={p.id}
                     type="button"
                     className="secondary"
-                    onClick={() => applyPreset(p.id)}
+                    onClick={() => applyPreset(p.id, p.label)}
                   >
                     {p.label}
                   </button>
                 ))}
+                <button type="button" className="secondary" onClick={() => setTab("import")}>
+                  Import my courses…
+                </button>
               </div>
             </div>
 
             <ul className="subject-list">
-              {(rules?.subjects ?? []).map((s) => (
-                <li key={s.name}>
+              {visibleSubjects.length === 0 && subjectFilter && (
+                <li className="subject-empty muted">No subjects match &ldquo;{subjectFilter}&rdquo;.</li>
+              )}
+              {visibleSubjects.map((s) => (
+                <li key={s.name} className={s.enabled ? "" : "off"}>
                   <div className="subject-main">
                     <div className="subject-row">
                       <strong>{s.name}</strong>
-                      <label className="switch">
+                      <label className="switch" title={s.enabled ? "Tidy sorts into this subject" : "Ignored while sorting"}>
                         <input
                           type="checkbox"
                           checked={s.enabled}
@@ -1316,15 +1237,13 @@ export default function App() {
                           className="keywords-editor"
                           value={editKeywords}
                           onChange={(e) => setEditKeywords(e.target.value)}
-                          placeholder="Paste phrases separated by commas — kept as you wrote them"
+                          placeholder="Phrases separated by commas — kept exactly as you write them"
                           rows={8}
+                          autoFocus
                         />
                         <p className="hint">
-                          {editKeywords
-                            .split(",")
-                            .map((k) => k.trim())
-                            .filter(Boolean).length}{" "}
-                          phrases · saved exactly as entered
+                          {plural(splitKeywords(editKeywords).length, "phrase")} · saved exactly as
+                          entered
                         </p>
                         <div className="btn-row">
                           <button
@@ -1339,79 +1258,110 @@ export default function App() {
                           </button>
                           <button
                             type="button"
-                            className="secondary"
+                            className="primary-toggle start small"
                             onClick={async () => {
-                              await saveSubject(s.name, editKeywords);
-                              setEditing(null);
+                              if (await saveSubject(s.name, editKeywords)) setEditing(null);
                             }}
                           >
-                            Save
+                            Save keywords
                           </button>
                         </div>
                       </div>
                     ) : (
                       <p className="muted keywords" title={s.keywords.join(", ")}>
                         {s.keywords.length
-                          ? `${s.keywords.length} phrases · ${s.keywords.slice(0, 6).join(" · ")}${
+                          ? `${plural(s.keywords.length, "keyword")} · ${s.keywords.slice(0, 6).join(" · ")}${
                               s.keywords.length > 6 ? "…" : ""
                             }`
-                          : "No keywords yet"}
+                          : "No keywords yet — only files containing the subject name will match"}
                       </p>
                     )}
-                    <div className="btn-row">
-                      <button
-                        type="button"
-                        className="text-btn"
-                        onClick={() => {
-                          setEditing(s.name);
-                          setEditKeywords(s.keywords.join(", "));
-                        }}
-                      >
-                        Edit keywords
-                      </button>
-                      <button
-                        type="button"
-                        className="text-btn"
-                        onClick={() => removeSubject(s.name)}
-                      >
-                        Remove
-                      </button>
-                    </div>
+                    {editing !== s.name && (
+                      <div className="btn-row">
+                        <button
+                          type="button"
+                          className="text-btn"
+                          onClick={() => {
+                            setEditing(s.name);
+                            setEditKeywords(s.keywords.join(", "));
+                          }}
+                        >
+                          Edit keywords
+                        </button>
+                        <button
+                          type="button"
+                          className="text-btn danger"
+                          onClick={() => removeSubject(s.name)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </li>
               ))}
               <li className="subject-general">
-                <strong>General</strong>
-                <span className="badge">Fallback when unsure</span>
+                <div>
+                  <strong>General</strong>
+                  <p className="muted keywords">Catch-all for files without a clear subject.</p>
+                </div>
+                <span className="badge">Always on</span>
               </li>
             </ul>
 
-            <div className="add-subject">
-              <h3>Add subject</h3>
+            <form
+              className="add-subject"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!draftName.trim()) return;
+                if (await saveSubject(draftName.trim(), draftKeywords)) {
+                  setDraftName("");
+                  setDraftKeywords("");
+                }
+              }}
+            >
+              <h3>Add a subject</h3>
               <input
                 value={draftName}
                 onChange={(e) => setDraftName(e.target.value)}
-                placeholder="e.g. Power Systems"
+                placeholder="Subject name, e.g. Calculus"
+                aria-label="New subject name"
               />
+              {draftExists && (
+                <p className="hint inline-warn">
+                  A subject with this name exists — saving will replace its keywords.
+                </p>
+              )}
               <textarea
                 className="keywords-editor"
                 value={draftKeywords}
                 onChange={(e) => setDraftKeywords(e.target.value)}
-                placeholder="Paste many phrases separated by commas"
+                placeholder="Keywords separated by commas, e.g. limits, derivatives, integration by parts"
+                aria-label="New subject keywords"
                 rows={4}
               />
-              <button
-                type="button"
-                className="secondary"
-                disabled={!draftName.trim()}
-                onClick={async () => {
-                  await saveSubject(draftName.trim(), draftKeywords);
-                  setDraftName("");
-                  setDraftKeywords("");
-                }}
-              >
-                Add subject
-              </button>
+              <div>
+                <button type="submit" className="secondary" disabled={!draftName.trim()}>
+                  {draftExists ? "Update subject" : "Add subject"}
+                </button>
+              </div>
+            </form>
+
+            <h2>File type folders</h2>
+            <p className="muted intro">
+              Inside each subject, files are grouped by type based on their extension.
+            </p>
+            <div className="rule-grid">
+              {(rules?.typeRules ?? []).map((rule) => (
+                <div key={rule.folder} className="rule-card">
+                  <strong>{rule.folder}</strong>
+                  <span className="ext">{rule.extensions.map((x) => `.${x}`).join("  ")}</span>
+                </div>
+              ))}
+              <div className="rule-card other">
+                <strong>Other</strong>
+                <span className="ext">anything unrecognised</span>
+              </div>
             </div>
           </section>
         )}
@@ -1422,17 +1372,29 @@ export default function App() {
             <div className="setting-row">
               <div>
                 <strong>Watch folder</strong>
+                <p className="muted">Where Tidy looks for new files.</p>
                 <p className="muted mono" title={config.watchFolder ?? undefined}>
                   {config.watchFolder ?? "Not set"}
                 </p>
               </div>
-              <button type="button" className="secondary" onClick={() => pickFolder("watchFolder")}>
-                Choose…
-              </button>
+              <div className="btn-row">
+                <button type="button" className="secondary" onClick={() => pickFolder("watchFolder")}>
+                  Change…
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={!config.watchFolder}
+                  onClick={() => config.watchFolder && revealPath(config.watchFolder)}
+                >
+                  Show
+                </button>
+              </div>
             </div>
             <div className="setting-row">
               <div>
                 <strong>Destination folder</strong>
+                <p className="muted">Where sorted files are filed, as Subject / Type / file.</p>
                 <p className="muted mono" title={config.destinationFolder ?? undefined}>
                   {config.destinationFolder ?? "Not set"}
                 </p>
@@ -1443,15 +1405,15 @@ export default function App() {
                   className="secondary"
                   onClick={() => pickFolder("destinationFolder")}
                 >
-                  Choose…
+                  Change…
                 </button>
                 <button
                   type="button"
                   className="secondary"
                   disabled={!config.destinationFolder}
-                  onClick={revealDestination}
+                  onClick={() => config.destinationFolder && revealPath(config.destinationFolder)}
                 >
-                  Reveal
+                  Show
                 </button>
               </div>
             </div>
@@ -1463,14 +1425,36 @@ export default function App() {
                 checked={config.monitorOnLaunch}
                 onChange={(e) => updateConfig({ monitorOnLaunch: e.target.checked })}
               />
-              <span>Start monitoring automatically when Tidy launches</span>
+              <span>
+                <strong>Start watching when Tidy opens</strong>
+                <small>
+                  Closing the window keeps Tidy in the menu bar / system tray so it keeps
+                  watching. Use <em>Quit Tidy</em> from the tray menu to fully exit.
+                </small>
+              </span>
             </label>
 
-            <p className="hint">
-              Closing the window keeps Tidy in the menu bar / system tray so
-              monitoring continues. Use <strong>Quit Tidy</strong> from the tray
-              menu to fully exit. Layout: Destination / Subject / Type / filename.
-            </p>
+            <h2>Setup</h2>
+            <div className="setting-row">
+              <div>
+                <strong>Run the setup guide again</strong>
+                <p className="muted">
+                  Walk through folders and subjects again. Your history and sorted files are kept.
+                </p>
+              </div>
+              <button type="button" className="secondary" onClick={rerunSetup}>
+                Open setup
+              </button>
+            </div>
+
+            <div className="about">
+              <p>
+                <strong>Tidy</strong>
+                {version ? ` ${version}` : ""} · runs entirely on this computer. Never
+                overwrites a file (adds “(2)” instead), never deletes anything, and skips
+                downloads that are still in progress.
+              </p>
+            </div>
           </section>
         )}
       </main>
@@ -1478,12 +1462,20 @@ export default function App() {
       {config && !config.onboardingComplete && (
         <Onboarding
           config={config}
+          rerun={rerun}
           busy={busy}
           error={error}
           onPickFolder={pickFolder}
-          onLoadPreset={loadOnboardingPreset}
+          onAddSubjects={addOnboardingSubjects}
           onFinish={finishOnboarding}
         />
+      )}
+
+      {notice && (
+        <div className="toast" role="status" aria-live="polite">
+          <span className="toast-dot" aria-hidden />
+          {notice}
+        </div>
       )}
 
       {progress && (
@@ -1494,12 +1486,12 @@ export default function App() {
               <h2>
                 {progress.phase === "moving"
                   ? "Moving files"
-                  : "Matching files"}
+                  : progress.phase === "reading"
+                    ? "Reading documents"
+                    : "Matching files"}
               </h2>
               <span className="progress-count">
-                {progress.total > 0
-                  ? `${progress.current} / ${progress.total}`
-                  : "Starting…"}
+                {progress.total > 0 ? `${progress.current} / ${progress.total}` : "Starting…"}
               </span>
             </div>
             {progress.filename && (
@@ -1521,43 +1513,70 @@ export default function App() {
                 }}
               />
             </div>
-            <p className="hint">Please wait — Tidy is working.</p>
+            <p className="hint">
+              {progress.phase === "moving"
+                ? "Moving files into place. Existing files are never overwritten."
+                : progress.phase === "reading"
+                  ? "Pulling text from PDFs/DOCX when the filename alone is unclear."
+                  : "Matching filenames to your subjects…"}
+            </p>
           </div>
         </div>
       )}
 
       {preview && !progress && (
-        <div className="modal-backdrop" role="presentation" onClick={dismissPreview}>
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={previewKind === "pending" ? undefined : dismissPreview}
+        >
           <div
             className="modal preview-modal"
             role="dialog"
+            aria-modal="true"
             aria-labelledby="preview-title"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-head">
               <h2 id="preview-title">
                 {previewKind === "pending"
-                  ? "Confirm new downloads"
+                  ? `${plural(preview.length, "new download")} ready to file`
                   : previewKind === "reorganize"
-                    ? "Confirm re-organize"
-                    : "Confirm organize"}
+                    ? "Fix mis-sorted files"
+                    : `Tidy up ${watchName}`}
               </h2>
-              <button type="button" className="text-btn" onClick={dismissPreview}>
+              <button type="button" className="text-btn" onClick={dismissPreview} title="Esc">
                 Close
               </button>
             </div>
             {preview.length === 0 ? (
-              <p className="muted">
-                {previewKind === "reorganize"
-                  ? "Every file in the destination already matches the current subjects."
-                  : "No eligible files in the watch folder."}
-              </p>
+              <>
+                <p className="muted">
+                  {previewKind === "reorganize"
+                    ? "Everything in the destination already matches your current subjects."
+                    : `There are no files in ${watchName} to sort right now.`}
+                </p>
+                <div className="modal-foot">
+                  <button type="button" className="secondary" onClick={dismissPreview}>
+                    OK
+                  </button>
+                </div>
+              </>
             ) : (
               <>
                 <p className="muted intro">
                   {previewKind === "reorganize"
-                    ? "These files look mis-sorted. Nothing moves until you confirm."
-                    : "Nothing is moved until you confirm. Review the proposed folder layout below."}
+                    ? "These files look like they belong in a different subject. Untick any you want to leave alone."
+                    : "Here's where each file will go. Untick anything you want to leave where it is — nothing moves until you confirm."}
+                  {previewStats && previewStats.unsure > 0 && (
+                    <>
+                      {" "}
+                      <span className="unsure-note">
+                        {plural(previewStats.unsure, "file")} had no clear subject and will go to
+                        General.
+                      </span>
+                    </>
+                  )}
                 </p>
                 <div className="preview-layout">
                   <div>
@@ -1576,10 +1595,16 @@ export default function App() {
                       >
                         Select none
                       </button>
+                      <span className="preview-count">
+                        {selected.size} of {preview.length} selected
+                      </span>
                     </div>
                     <ul className="preview-list">
                       {preview.map((item) => (
-                        <li key={item.source}>
+                        <li
+                          key={item.source}
+                          className={item.subject === "General" ? "unsure" : ""}
+                        >
                           <label>
                             <input
                               type="checkbox"
@@ -1594,7 +1619,7 @@ export default function App() {
                               }}
                             />
                             <span>
-                              <strong>{item.filename}</strong>
+                              <strong title={item.filename}>{item.filename}</strong>
                               <span className="route-tag">
                                 {item.fromSubject != null && (
                                   <>
@@ -1612,15 +1637,22 @@ export default function App() {
                     </ul>
                   </div>
                   <div className="preview-tree-pane">
-                    <p className="eyebrow">How it will look</p>
+                    <p className="eyebrow">
+                      Result
+                      {previewStats && previewStats.subjects > 0
+                        ? ` · ${plural(previewStats.subjects, "subject folder")}`
+                        : ""}
+                    </p>
                     <PreviewTree
+                      rootName={destName}
                       items={preview.filter((p) => selected.has(p.source))}
                     />
                   </div>
                 </div>
                 <div className="modal-foot">
+                  <span className="modal-foot-note">You can undo any move afterwards.</span>
                   <button type="button" className="secondary" onClick={dismissPreview}>
-                    {previewKind === "pending" ? "Skip for now" : "Cancel"}
+                    {previewKind === "pending" ? "Leave them for now" : "Cancel"}
                   </button>
                   <button
                     type="button"
@@ -1628,8 +1660,7 @@ export default function App() {
                     disabled={busy || selected.size === 0}
                     onClick={applyPreview}
                   >
-                    Confirm & move {selected.size} file
-                    {selected.size === 1 ? "" : "s"}
+                    Move {plural(selected.size, "file")}
                   </button>
                 </div>
               </>

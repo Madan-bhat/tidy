@@ -6,8 +6,10 @@ use crate::stability;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +102,14 @@ pub fn preview_reorganize(app: &AppHandle, config: &AppConfig) -> Result<Vec<Pre
             return None;
         }
         let (from_subject, from_type) = current_placement(path, dest_path);
+        // No evidence either way → don't evict a file from the folder it's already in.
+        if planned.subject.eq_ignore_ascii_case("General")
+            && from_subject
+                .as_deref()
+                .is_some_and(|s| !s.eq_ignore_ascii_case("General"))
+        {
+            return None;
+        }
         if from_subject.as_deref() == Some(planned.subject.as_str())
             && from_type.as_deref() == Some(planned.file_type.as_str())
             && planned.destination.file_name() == path.file_name()
@@ -113,8 +123,9 @@ pub fn preview_reorganize(app: &AppHandle, config: &AppConfig) -> Result<Vec<Pre
     Ok(items)
 }
 
-/// Two-phase scan: BM25 on filenames in parallel, then PDF/DOCX extract only
-/// for files that stayed weak / General.
+/// Two-phase scan: fast filename BM25, then document text for weak / General
+/// matches — with its own progress bar, low concurrency, and per-file timeouts
+/// so a slow PDF cannot freeze the UI at 100%.
 fn classify_paths_fast<F>(
     app: &AppHandle,
     config: &AppConfig,
@@ -132,9 +143,13 @@ where
     let phase1: Vec<(PathBuf, Option<PlannedMove>)> = entries
         .par_iter()
         .map(|path| {
-            let planned = mover::plan_move_with_index(path, config, index, false).ok();
+            let planned = catch_unwind(AssertUnwindSafe(|| {
+                mover::plan_move_with_index(path, config, index, false, false).ok()
+            }))
+            .ok()
+            .flatten();
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-            if n == 1 || n == total || n % 8 == 0 {
+            if n == 1 || n == total || n % 4 == 0 {
                 let name = path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -145,7 +160,7 @@ where
         })
         .collect();
 
-    // Phase 2 — extract text only when filename ranking failed.
+    // Phase 2 — extract text only when filename ranking was weak / General.
     let needs_extract: Vec<PathBuf> = phase1
         .iter()
         .filter_map(|(path, planned)| {
@@ -153,7 +168,7 @@ where
                 .as_ref()
                 .map(|p| p.subject.eq_ignore_ascii_case("General"))
                 .unwrap_or(true);
-            if weak {
+            if weak && crate::extract::can_extract(path) {
                 Some(path.clone())
             } else {
                 None
@@ -164,22 +179,96 @@ where
     let extracted: HashMapPath = if needs_extract.is_empty() {
         HashMapPath::default()
     } else {
-        emit_progress(app, "matching", total.saturating_sub(needs_extract.len()), total, "reading documents…");
-        needs_extract
-            .par_iter()
-            .filter_map(|path| {
-                let planned = mover::plan_move_with_index(path, config, index, true).ok()?;
-                Some((path.clone(), planned))
-            })
-            .collect()
+        let extract_total = needs_extract.len();
+        let extract_done = AtomicUsize::new(0);
+        let deadline = Instant::now() + Duration::from_secs(90);
+        emit_progress(app, "reading", 0, extract_total, "reading documents…");
+
+        // Cap parallelism — pdf-extract is heavy; flooding cores feels frozen.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().expect("rayon"));
+
+        pool.install(|| {
+            needs_extract
+                .par_iter()
+                .filter_map(|path| {
+                    // Global budget: never let a pile of slow documents hold the scan hostage.
+                    let planned = if Instant::now() > deadline {
+                        None
+                    } else {
+                        catch_unwind(AssertUnwindSafe(|| {
+                            mover::plan_move_with_index(path, config, index, true, false).ok()
+                        }))
+                        .ok()
+                        .flatten()
+                    };
+                    let n = extract_done.fetch_add(1, Ordering::Relaxed) + 1;
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    if n == 1 || n == extract_total || n % 2 == 0 {
+                        emit_progress(app, "reading", n, extract_total, name);
+                    }
+                    planned.map(|p| (path.clone(), p))
+                })
+                .collect()
+        })
     };
 
+    // Merge phase 1 + 2.
+    let mut merged: Vec<(PathBuf, Option<PlannedMove>)> = phase1
+        .into_iter()
+        .map(|(path, planned)| {
+            let planned = extracted.get(&path).cloned().or(planned);
+            (path, planned)
+        })
+        .collect();
+
+    // Phase 3 — hybrid semantic pass (MiniLM) for documents still unmatched.
+    // One batched call, never per file, so it cannot stall the scan.
+    if crate::classify_embed::is_enabled() {
+        let idxs: Vec<usize> = merged
+            .iter()
+            .enumerate()
+            .filter(|(_, (path, planned))| {
+                is_document(path)
+                    && planned
+                        .as_ref()
+                        .map(|p| p.subject.eq_ignore_ascii_case("General"))
+                        .unwrap_or(false)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        if !idxs.is_empty() {
+            emit_progress(app, "reading", idxs.len(), idxs.len(), "semantic matching…");
+            let queries: Vec<String> = idxs
+                .iter()
+                .map(|i| semantic_query(&merged[*i].0))
+                .collect();
+            let subjects = config.subjects.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(crate::classify_embed::classify_batch(&queries, &subjects));
+            });
+            if let Ok(results) = rx.recv_timeout(Duration::from_secs(30)) {
+                for (slot, found) in idxs.iter().zip(results) {
+                    if let Some(subject) = found {
+                        if let Ok(plan) =
+                            mover::plan_move_to_subject(&merged[*slot].0, config, &subject)
+                        {
+                            merged[*slot].1 = Some(plan);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let mut items = Vec::with_capacity(entries.len());
-    for (path, planned) in phase1 {
-        let planned = extracted
-            .get(&path)
-            .cloned()
-            .or(planned);
+    for (path, planned) in merged {
         if let Some(planned) = planned {
             if let Some(item) = keep(planned, &path) {
                 items.push(item);
@@ -195,13 +284,41 @@ where
     items
 }
 
-/// Local alias so we don't need a use at the top for PathBuf keys.
+fn is_document(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "pdf" | "doc" | "docx" | "ppt" | "pptx" | "txt" | "md" | "odt" | "odp" | "rtf" | "key"
+            | "pages" | "tex"
+    )
+}
+
+/// Filename as natural-language text for the embedder.
+fn semantic_query(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .replace(['_', '-', '.'], " ");
+    let mut q = stem;
+    if let Some(text) = crate::extract::peek_cached(path) {
+        q.push_str(". ");
+        q.push_str(&text);
+    }
+    q
+}
+
 type HashMapPath = std::collections::HashMap<PathBuf, PlannedMove>;
+
 
 pub fn apply(
     app: &AppHandle,
     config: &AppConfig,
     sources: &[String],
+    subjects: &std::collections::HashMap<String, String>,
 ) -> Result<Vec<MoveRecord>, String> {
     let total = sources.len();
     emit_progress(app, "moving", 0, total, "");
@@ -229,7 +346,12 @@ pub fn apply(
             continue;
         }
 
-        match mover::plan_move_with_index(path, config, &index, true) {
+        // Use exactly what the preview showed; only re-classify if we weren't told.
+        let plan = match subjects.get(source) {
+            Some(subject) => mover::plan_move_to_subject(path, config, subject),
+            None => mover::plan_move_with_index(path, config, &index, true, false),
+        };
+        match plan {
             Ok(planned) => {
                 if mover::paths_equal(&planned.source, &planned.destination) {
                     continue;

@@ -65,9 +65,9 @@ fn parse_line(line: &str) -> Option<ProposedSubject> {
         return None;
     }
 
-    // "Power Systems: load flow, transmission"
-    // "Power Systems - load flow, transmission"
-    // "Power Systems | load flow; transmission"
+    // "Garden Design: raised beds, irrigation"
+    // "Garden Design - raised beds, irrigation"
+    // "Garden Design | raised beds; irrigation"
     for sep in [": ", " - ", " – ", " — ", " | "] {
         if let Some((name, rest)) = line.split_once(sep) {
             let name = clean_name(name)?;
@@ -219,16 +219,16 @@ mod tests {
     #[test]
     fn parses_syllabus_style() {
         let text = r#"
-B.Tech Electrical courses:
-1. Power Systems: load flow, transmission, fault
-2. Control Systems - pid, bode, root locus
-3. Electrical Machines
+My projects:
+1. Garden Design: raised beds, irrigation, soil
+2. Home Budget - rent, utilities, savings
+3. Travel Plans
 "#;
         let out = parse_prompt(text);
-        assert!(out.iter().any(|s| s.name == "Power Systems"));
-        assert!(out.iter().any(|s| s.name == "Control Systems"));
-        assert!(out.iter().any(|s| s.name == "Electrical Machines"));
-        let ps = out.iter().find(|s| s.name == "Power Systems").unwrap();
-        assert!(ps.keywords.iter().any(|k| k.contains("load flow")));
+        assert!(out.iter().any(|s| s.name == "Garden Design"));
+        assert!(out.iter().any(|s| s.name == "Home Budget"));
+        assert!(out.iter().any(|s| s.name == "Travel Plans"));
+        let ps = out.iter().find(|s| s.name == "Garden Design").unwrap();
+        assert!(ps.keywords.iter().any(|k| k.contains("raised beds")));
     }
 }

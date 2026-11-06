@@ -18,16 +18,17 @@ pub struct PlannedMove {
 
 #[allow(dead_code)]
 pub fn plan_move(path: &Path, config: &AppConfig) -> Result<PlannedMove, String> {
-    plan_move_opts(path, config, true)
+    plan_move_opts(path, config, true, true)
 }
 
 pub fn plan_move_opts(
     path: &Path,
     config: &AppConfig,
     allow_extract: bool,
+    allow_embed: bool,
 ) -> Result<PlannedMove, String> {
     let index = classify_subject::SubjectIndex::build(&config.subjects);
-    plan_move_with_index(path, config, &index, allow_extract)
+    plan_move_with_index(path, config, &index, allow_extract, allow_embed)
 }
 
 pub fn plan_move_with_index(
@@ -35,6 +36,7 @@ pub fn plan_move_with_index(
     config: &AppConfig,
     index: &classify_subject::SubjectIndex,
     allow_extract: bool,
+    allow_embed: bool,
 ) -> Result<PlannedMove, String> {
     let dest_root = config
         .destination_folder
@@ -51,10 +53,44 @@ pub fn plan_move_with_index(
         .ok_or("Invalid filename")?
         .to_string();
 
-    let file_type = classify_type::classify_type(path).to_string();
-    let subject =
-        classify_subject::classify_with_index(path, index, &config.subjects, allow_extract);
+    let subject = classify_subject::classify_with_index(
+        path,
+        index,
+        &config.subjects,
+        allow_extract,
+        allow_embed,
+    );
+    build_plan(path, dest_root, filename, subject)
+}
 
+/// Plan a move into an already-decided subject (preview result, semantic pass).
+pub fn plan_move_to_subject(
+    path: &Path,
+    config: &AppConfig,
+    subject: &str,
+) -> Result<PlannedMove, String> {
+    let dest_root = config
+        .destination_folder
+        .as_ref()
+        .ok_or("Destination folder is not set")?;
+    if !Path::new(dest_root).is_dir() {
+        return Err("Destination folder does not exist".into());
+    }
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("Invalid filename")?
+        .to_string();
+    build_plan(path, dest_root, filename, subject.to_string())
+}
+
+fn build_plan(
+    path: &Path,
+    dest_root: &str,
+    filename: String,
+    subject: String,
+) -> Result<PlannedMove, String> {
+    let file_type = classify_type::classify_type(path).to_string();
     let target_dir = PathBuf::from(dest_root).join(&subject).join(&file_type);
     let destination = unique_path_for(path, &target_dir, &filename);
 
@@ -137,7 +173,7 @@ pub fn organize_file_opts(
     allow_extract: bool,
     batch_id: Option<String>,
 ) -> Result<MoveRecord, String> {
-    let planned = plan_move_opts(path, config, allow_extract)?;
+    let planned = plan_move_opts(path, config, allow_extract, true)?;
     let mut record = execute_move(&planned)?;
     record.batch_id = batch_id;
     Ok(record)
