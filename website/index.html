@@ -3,10 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tidy — Downloads, sorted by subject</title>
+    <title>Tidy — Your Downloads, sorted by subject</title>
     <meta
       name="description"
-      content="Tidy is a local desktop file organizer. It watches your Downloads folder, proposes subject and type folders, and moves nothing until you confirm."
+      content="Tidy is a free desktop app for students. It watches your Downloads folder, files every new download into Subject / Type folders you define, and moves nothing until you confirm. Runs entirely on your computer."
+    />
+    <meta property="og:title" content="Tidy — Your Downloads, sorted by subject" />
+    <meta
+      property="og:description"
+      content="Watches Downloads, files each download into Subject / Type folders, and only moves after you confirm. Local, private, undoable."
     />
     <meta name="theme-color" content="#f5f6f4" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -16,6 +21,9 @@
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400..700&display=swap"
     />
     <link rel="stylesheet" href="./styles.css" />
+    <script>
+      document.documentElement.classList.add("js");
+    </script>
   </head>
   <body>
     <header class="nav">
@@ -23,93 +31,246 @@
         <span class="dot" aria-hidden="true"></span>Tidy
       </a>
       <nav aria-label="Sections">
+        <a href="#features">Features</a>
         <a href="#how">How it works</a>
+        <a href="#safety">Privacy</a>
+        <a href="#faq">FAQ</a>
         <a class="nav-cta" href="#download">Download</a>
       </nav>
     </header>
 
     <main id="top">
+      <!-- ============ Hero ============ -->
       <section class="hero">
         <div class="hero-copy">
-          <p class="kicker reveal" style="--d: 0ms">Local file organizer · v1.0</p>
+          <p class="kicker reveal" style="--d: 0ms">Free desktop app · macOS · Windows · Linux</p>
           <h1 class="wordmark reveal" style="--d: 60ms">
             Tidy<span class="pulse" aria-hidden="true"></span>
           </h1>
           <p class="lede reveal" style="--d: 160ms">
-            Your Downloads, filed into course subjects and file types — on your
-            machine, and only after you confirm.
+            Tidy watches your Downloads folder and files every lecture, worksheet and
+            screenshot into the right <b>subject</b> and <b>type</b> folder — on your computer,
+            and only after you confirm.
           </p>
           <div class="cta-row reveal" style="--d: 240ms">
             <a class="btn primary" id="hero-cta" href="#download">Download Tidy</a>
-            <a class="btn quiet" href="#how">How it works</a>
+            <a class="btn quiet" href="#how">See how it works</a>
           </div>
           <ul class="facts reveal" style="--d: 320ms">
             <li>No account</li>
-            <li>No cloud</li>
-            <li>Undo any batch</li>
+            <li>Files never uploaded</li>
+            <li>Undo any move</li>
           </ul>
         </div>
 
-        <figure class="ledger" aria-label="Example: Tidy proposes where three downloads will go">
+        <figure class="ledger" aria-label="Example: Tidy proposes where four downloads will go">
           <div class="ledger-head">
-            <span class="ledger-title">Confirm new downloads</span>
-            <span class="ledger-meta">3 files</span>
+            <span class="ledger-title">4 new downloads ready to file</span>
+            <span class="ledger-meta">Review</span>
           </div>
           <div class="ledger-cols" aria-hidden="true">
             <span>~/Downloads</span>
-            <span>Destination</span>
+            <span>~/Documents/Tidy</span>
           </div>
           <ol class="routes">
             <li style="--i: 0">
-              <span class="file">load_flow_notes.pdf</span>
+              <span class="file">limits_worksheet_3.pdf</span>
               <span class="wire" aria-hidden="true"></span>
-              <span class="dest"><b>Power Systems</b>/Documents</span>
+              <span class="dest"><b>Calculus</b>/Documents</span>
             </li>
             <li style="--i: 1">
-              <span class="file">pid_tuning_lab.docx</span>
+              <span class="file">alkane_reactions_lab.docx</span>
               <span class="wire" aria-hidden="true"></span>
-              <span class="dest"><b>Control Systems</b>/Documents</span>
+              <span class="dest"><b>Organic Chemistry</b>/Documents</span>
             </li>
             <li style="--i: 2">
-              <span class="file">kmap_circuit.png</span>
+              <span class="file">binary_tree_insert.py</span>
               <span class="wire" aria-hidden="true"></span>
-              <span class="dest"><b>Digital Electronics</b>/Images</span>
+              <span class="dest"><b>Data Structures</b>/Code</span>
             </li>
             <li style="--i: 3">
-              <span class="file">IMG_2041.heic</span>
+              <span class="file">IMG_2041.jpg</span>
               <span class="wire" aria-hidden="true"></span>
               <span class="dest unsure"><b>General</b>/Images</span>
             </li>
           </ol>
           <div class="ledger-foot">
             <span class="note">Nothing moves until you confirm.</span>
-            <span class="confirm" aria-hidden="true">Confirm &amp; move</span>
+            <span class="confirm" aria-hidden="true">Move 4 files</span>
           </div>
         </figure>
       </section>
 
-      <section id="how" class="how" aria-labelledby="how-title">
-        <h2 id="how-title" class="section-title">How it works</h2>
-        <ol class="steps">
-          <li>
-            <span class="step-n">01</span>
-            <h3>Point it at a folder</h3>
-            <p>Watch Downloads or any folder, and pick where sorted files should live.</p>
-          </li>
-          <li>
-            <span class="step-n">02</span>
-            <h3>Tell it your subjects</h3>
+      <!-- ============ Before / after ============ -->
+      <section class="ba" aria-labelledby="ba-title">
+        <div class="section-intro">
+          <p class="kicker">What Tidy does</p>
+          <h2 id="ba-title" class="section-title">
+            From a pile of downloads to folders you can find things in.
+          </h2>
+          <p class="section-lede">
+            Every semester your Downloads fills up with slides, past papers, lab sheets and
+            screenshots named <code>final_v2 (3).pdf</code>. Tidy reads what each file is about
+            and files it under the course it belongs to — so the night before an exam, everything
+            for that course is in one place.
+          </p>
+        </div>
+
+        <div class="ba-grid">
+          <figure class="ba-pane before">
+            <figcaption><span>Before</span> ~/Downloads · 11 files</figcaption>
+            <ul class="mess">
+              <li>limits_worksheet_3.pdf</li>
+              <li>Screenshot 2026-10-12 at 21.04.png</li>
+              <li>alkane_reactions_lab.docx</li>
+              <li>week5_slides.pptx</li>
+              <li>binary_tree_insert.py</li>
+              <li>IMG_2041.jpg</li>
+              <li>integration_by_parts_notes.pdf</li>
+              <li>hashing_assignment.zip</li>
+              <li>spectroscopy_pyq_2024.pdf</li>
+              <li>marks.xlsx</li>
+              <li>graph_bfs_dfs.pdf</li>
+            </ul>
+          </figure>
+          <span class="ba-arrow" aria-hidden="true"></span>
+          <figure class="ba-pane after">
+            <figcaption><span>After</span> ~/Documents/Tidy</figcaption>
+            <div class="tree">
+              <div class="t-subj">Calculus/</div>
+              <div class="t-type">Documents/</div>
+              <div class="t-file">limits_worksheet_3.pdf</div>
+              <div class="t-file">integration_by_parts_notes.pdf</div>
+              <div class="t-subj">Data Structures/</div>
+              <div class="t-type">Archives/</div>
+              <div class="t-file">hashing_assignment.zip</div>
+              <div class="t-type">Code/</div>
+              <div class="t-file">binary_tree_insert.py</div>
+              <div class="t-type">Documents/</div>
+              <div class="t-file">graph_bfs_dfs.pdf</div>
+              <div class="t-subj">Organic Chemistry/</div>
+              <div class="t-type">Documents/</div>
+              <div class="t-file">alkane_reactions_lab.docx</div>
+              <div class="t-file">spectroscopy_pyq_2024.pdf</div>
+              <div class="t-subj muted">General/</div>
+              <div class="t-type">Images/ · Presentations/ · Spreadsheets/</div>
+              <div class="t-file">4 files without a clear subject</div>
+            </div>
+          </figure>
+        </div>
+      </section>
+
+      <!-- ============ Features ============ -->
+      <section id="features" class="features" aria-labelledby="features-title">
+        <div class="section-intro">
+          <p class="kicker">Features</p>
+          <h2 id="features-title" class="section-title">Careful by default. Fast when you want it.</h2>
+        </div>
+        <ul class="feature-grid">
+          <li class="reveal-on-scroll">
+            <span class="f-ico" aria-hidden="true">01</span>
+            <h3>Waits for downloads to finish</h3>
             <p>
-              Load the B.Tech Electrical preset or paste your syllabus. Keywords
-              match filenames and document text.
+              Ignores <code>.crdownload</code>, <code>.part</code> and other in-progress files,
+              and checks that a file has stopped growing before touching it.
             </p>
           </li>
-          <li>
-            <span class="step-n">03</span>
-            <h3>Review, then move</h3>
+          <li class="reveal-on-scroll">
+            <span class="f-ico" aria-hidden="true">02</span>
+            <h3>Sorts by your subjects</h3>
             <p>
-              See the folder tree first. Confirm what moves, and revert the whole
-              batch if you change your mind.
+              Matches the filename against each course&rsquo;s name and topics. If that&rsquo;s
+              not enough, it reads the text inside PDF, Word and text files.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="f-ico" aria-hidden="true">03</span>
+            <h3>Then by file type</h3>
+            <p>
+              Inside each subject, files are grouped into Documents, Images, Code, Slides,
+              Spreadsheets, Archives and more.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="f-ico" aria-hidden="true">04</span>
+            <h3>You confirm every move</h3>
+            <p>
+              Each batch shows the exact folder tree it will create. Untick anything you&rsquo;d
+              rather leave where it is.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="f-ico" aria-hidden="true">05</span>
+            <h3>Undo anything</h3>
+            <p>
+              Put a single file back, or revert the whole last batch with one click. Tidy keeps a
+              history of every move.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="f-ico" aria-hidden="true">06</span>
+            <h3>Import your syllabus</h3>
+            <p>
+              Paste a course list or syllabus and Tidy proposes subjects and keywords for you to
+              review — no typing rules by hand.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="f-ico" aria-hidden="true">07</span>
+            <h3>Cleans up the backlog</h3>
+            <p>
+              Sort the files already sitting in Downloads, or re-check your sorted folders after
+              you add new subjects.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="f-ico" aria-hidden="true">08</span>
+            <h3>Stays out of the way</h3>
+            <p>
+              Lives in the menu bar or system tray and keeps watching after you close the window.
+              Starts with your computer if you want.
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ============ How it works ============ -->
+      <section id="how" class="how" aria-labelledby="how-title">
+        <div class="section-intro">
+          <p class="kicker">How it works</p>
+          <h2 id="how-title" class="section-title">Set up in about a minute.</h2>
+        </div>
+        <ol class="steps">
+          <li class="reveal-on-scroll">
+            <span class="step-n">01</span>
+            <h3>Pick two folders</h3>
+            <p>
+              The folder to watch — usually Downloads, pre-selected for you — and an empty folder
+              where sorted files should live.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="step-n">02</span>
+            <h3>Tell it your courses</h3>
+            <p>
+              Type them one per line, or paste your syllabus. Adding topics like
+              <code>Calculus: limits, integrals</code> makes matching sharper.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="step-n">03</span>
+            <h3>Download as usual</h3>
+            <p>
+              When a download finishes, Tidy proposes where it should go and waits for your OK.
+              Busy? Leave it for later.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="step-n">04</span>
+            <h3>Confirm, or undo</h3>
+            <p>
+              Files are moved — never copied over or deleted. Change your mind and they go right
+              back.
             </p>
           </li>
         </ol>
@@ -118,9 +279,172 @@
         </p>
       </section>
 
+      <!-- ============ Matching explainer ============ -->
+      <section class="match" aria-labelledby="match-title">
+        <div class="match-copy">
+          <p class="kicker">Under the hood</p>
+          <h2 id="match-title" class="section-title">How Tidy picks a subject.</h2>
+          <p class="section-lede">
+            Tidy only ever chooses between the subjects <em>you</em> give it. It would rather say
+            &ldquo;not sure&rdquo; than guess — uncertain files go to <b>General</b>, where you
+            can move them during review.
+          </p>
+        </div>
+        <ol class="match-steps">
+          <li class="reveal-on-scroll">
+            <span class="m-label">1 · Read the name</span>
+            <p class="m-sample">
+              <code>integration_by_parts_notes.pdf</code>
+              <span class="m-arrow" aria-hidden="true">→</span>
+              <span class="m-tokens"><i class="hit">integration</i> <i class="hit">parts</i> <i>notes</i></span>
+            </p>
+            <p>
+              Splits the filename into words — including <code>camelCase</code> and
+              <code>run-together</code> names — and drops filler like &ldquo;notes&rdquo; or
+              &ldquo;final&rdquo;.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="m-label">2 · Look inside if needed</span>
+            <p class="m-sample">
+              <code>scan_0031.pdf</code>
+              <span class="m-arrow" aria-hidden="true">→</span>
+              <span class="m-tokens">&ldquo;…the <i class="hit">derivative</i> of a <i class="hit">limit</i>…&rdquo;</span>
+            </p>
+            <p>
+              When the name says nothing useful, Tidy reads the text of PDF, DOCX and TXT files —
+              locally, on your machine.
+            </p>
+          </li>
+          <li class="reveal-on-scroll">
+            <span class="m-label">3 · Require a clear winner</span>
+            <p class="m-sample">
+              <span class="m-bar"><b style="--w: 92%"></b>Calculus</span>
+              <span class="m-bar dim"><b style="--w: 22%"></b>Physics</span>
+            </p>
+            <p>
+              Each subject is scored on keywords, phrases, acronyms and near-spellings, plus a small
+              on-device language model for meaning. A subject must clearly beat the runner-up.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <!-- ============ File types ============ -->
+      <section class="types" aria-labelledby="types-title">
+        <div class="section-intro">
+          <p class="kicker">File types</p>
+          <h2 id="types-title" class="section-title">Inside every subject, a folder per type.</h2>
+        </div>
+        <dl class="type-grid">
+          <div><dt>Documents</dt><dd>.pdf .docx .txt</dd></div>
+          <div><dt>Presentations</dt><dd>.pptx .ppt</dd></div>
+          <div><dt>Spreadsheets</dt><dd>.xlsx .csv</dd></div>
+          <div><dt>Images</dt><dd>.jpg .jpeg .png .svg .webp</dd></div>
+          <div><dt>Code</dt><dd>.py .js .ts .c .cpp .java .v</dd></div>
+          <div><dt>Archives</dt><dd>.zip .rar .7z .tar</dd></div>
+          <div><dt>Videos</dt><dd>.mp4 .mkv .mov</dd></div>
+          <div><dt>Audio</dt><dd>.mp3 .wav .flac</dd></div>
+          <div><dt>Installers</dt><dd>.dmg .pkg .exe .msi</dd></div>
+          <div class="other"><dt>Other</dt><dd>anything else</dd></div>
+        </dl>
+      </section>
+
+      <!-- ============ Safety ============ -->
+      <section id="safety" class="safety" aria-labelledby="safety-title">
+        <div class="section-intro">
+          <p class="kicker">Privacy &amp; safety</p>
+          <h2 id="safety-title" class="section-title">Your files stay yours.</h2>
+        </div>
+        <ul class="safety-list">
+          <li>
+            <h3>Runs on your computer</h3>
+            <p>No account, no cloud, no API key. Files and their contents are never uploaded anywhere.</p>
+          </li>
+          <li>
+            <h3>Never overwrites</h3>
+            <p>If a file with the same name already exists, Tidy saves yours as <code>name (2).pdf</code>.</p>
+          </li>
+          <li>
+            <h3>Never deletes</h3>
+            <p>Tidy only moves files. It has no delete action at all.</p>
+          </li>
+          <li>
+            <h3>Always reversible</h3>
+            <p>Every move is logged, so a single file or a whole batch can go back where it came from.</p>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ============ FAQ ============ -->
+      <section id="faq" class="faq" aria-labelledby="faq-title">
+        <div class="section-intro">
+          <p class="kicker">FAQ</p>
+          <h2 id="faq-title" class="section-title">Questions, answered.</h2>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary>Does Tidy upload my files or need the internet?</summary>
+            <p>
+              No files are ever uploaded. On first launch Tidy downloads a small (~23&nbsp;MB)
+              language model once, which helps it understand topics. If that download isn&rsquo;t
+              possible, Tidy still works using keyword matching.
+            </p>
+          </details>
+          <details>
+            <summary>Will it move files without asking?</summary>
+            <p>
+              No. Every new download is shown to you first with the folder it will go to. Nothing
+              moves until you press confirm — and you can untick any file.
+            </p>
+          </details>
+          <details>
+            <summary>What if it puts something in the wrong subject?</summary>
+            <p>
+              Press <b>Undo</b> next to the file, or <b>Revert last batch</b>. Then add a keyword to
+              the right subject in <b>Rules</b> — and use <b>Fix mis-sorted files</b> to re-check
+              everything already sorted.
+            </p>
+          </details>
+          <details>
+            <summary>What happens to files that don&rsquo;t match any subject?</summary>
+            <p>
+              They go to a <b>General</b> folder, still grouped by type. Tidy never forces a guess
+              when it isn&rsquo;t confident.
+            </p>
+          </details>
+          <details>
+            <summary>Can I use it for things other than courses?</summary>
+            <p>
+              Yes. A &ldquo;subject&rdquo; is just a folder name plus keywords — projects, clients,
+              hobbies or anything else work the same way.
+            </p>
+          </details>
+          <details>
+            <summary>Does it touch files that are already in Downloads?</summary>
+            <p>
+              Only if you ask. <b>Tidy up Downloads now</b> previews the existing files so you can
+              choose what to move. Otherwise Tidy only looks at new files.
+            </p>
+          </details>
+          <details>
+            <summary>macOS says the app can&rsquo;t be opened. What do I do?</summary>
+            <p>
+              Open <em>System Settings → Privacy &amp; Security</em>, scroll down and choose
+              <b>Open Anyway</b> next to Tidy. You only need to do this once.
+            </p>
+          </details>
+          <details>
+            <summary>Is it free?</summary>
+            <p>Yes — free for personal use.</p>
+          </details>
+        </div>
+      </section>
+
+      <!-- ============ Download ============ -->
       <section id="download" class="download" aria-labelledby="download-title">
         <div class="download-head">
-          <h2 id="download-title" class="section-title">Download</h2>
+          <h2 id="download-title" class="section-title">Download Tidy</h2>
           <p>Free for personal use. Everything runs on your machine.</p>
         </div>
         <div class="dl-grid">
@@ -156,11 +480,11 @@
           </a>
         </div>
         <p class="fineprint">
-          Installers are served from
-          <a href="https://github.com/Madan-bhat/tidy/releases/latest">GitHub Releases</a>
-          after CI finishes — no manual copy to Vercel. macOS may ask you to open Tidy from
-          <em>System Settings → Privacy &amp; Security</em> on first launch. On Linux, run
-          <code>chmod +x</code> on the AppImage.
+          All installers are on
+          <a href="https://github.com/Madan-bhat/tidy/releases/latest">GitHub Releases</a>. On
+          macOS, if the app is blocked on first launch, open
+          <em>System Settings → Privacy &amp; Security</em> and choose <em>Open Anyway</em>. On
+          Linux, run <code>chmod +x</code> on the AppImage before opening it.
         </p>
       </section>
     </main>
@@ -168,6 +492,7 @@
     <footer class="foot">
       <span class="foot-mark">Tidy</span>
       <span>Local · Private · Confirm before move</span>
+      <a href="https://github.com/Madan-bhat/tidy">GitHub</a>
     </footer>
 
     <script>
@@ -184,6 +509,29 @@
         cta.href = card.getAttribute("href");
         cta.setAttribute("download", "");
         cta.textContent = "Download for " + card.querySelector(".dl-os").textContent;
+      })();
+    </script>
+    <script>
+      (function () {
+        var items = document.querySelectorAll(".reveal-on-scroll");
+        if (!("IntersectionObserver" in window)) {
+          items.forEach(function (el) { el.classList.add("in"); });
+          return;
+        }
+        var io = new IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (entry) {
+              if (!entry.isIntersecting) return;
+              entry.target.classList.add("in");
+              io.unobserve(entry.target);
+            });
+          },
+          { rootMargin: "0px 0px -8% 0px" }
+        );
+        items.forEach(function (el, i) {
+          el.style.setProperty("--d", (i % 4) * 70 + "ms");
+          io.observe(el);
+        });
       })();
     </script>
     <script>
