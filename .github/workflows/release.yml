@@ -11,12 +11,33 @@ on:
     tags:
       - "v*"
 
-# Needed so tauri-action can create/upload a GitHub Release.
 permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.name }}
+    steps:
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.version }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          if [[ ! "$TAG" =~ ^v[0-9] ]]; then
+            echo "Invalid tag '$TAG' — use something like v1.0.0"
+            exit 1
+          fi
+          echo "name=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Using release tag: $TAG"
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -49,46 +70,26 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
-      - name: Resolve release tag
-        id: tag
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.version }}"
-          else
-            TAG="${{ github.ref_name }}"
-          fi
-          # Never publish under branch names like "main"
-          if [[ ! "$TAG" =~ ^v[0-9] ]]; then
-            echo "Invalid tag '$TAG' — use something like v1.0.0"
-            exit 1
-          fi
-          echo "name=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Using release tag: $TAG"
-
       - name: Build Tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ steps.tag.outputs.name }}
-          releaseName: "Tidy ${{ steps.tag.outputs.name }}"
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: "Tidy ${{ needs.prepare.outputs.tag }}"
           releaseBody: |
             Desktop installers for macOS, Windows, and Linux.
 
-            - macOS: `.dmg`
-            - Windows: NSIS `.exe`
-            - Linux: `.AppImage` / `.deb`
-          releaseDraft: true
+            Website download buttons sync automatically after this release.
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
 
-      # Backup: keep installers even if release upload fails
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tidy-${{ matrix.platform }}-${{ steps.tag.outputs.name || 'build' }}
+          name: tidy-${{ matrix.platform }}-${{ needs.prepare.outputs.tag }}
           path: |
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.exe
@@ -96,3 +97,54 @@ jobs:
             src-tauri/target/release/bundle/**/*.deb
           if-no-files-found: ignore
           retention-days: 14
+
+  sync-website:
+    name: Sync website download links
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Wait for release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          for i in $(seq 1 30); do
+            COUNT=$(gh release view "$TAG" --json assets --jq '.assets | length')
+            echo "Attempt $i: $COUNT assets on $TAG"
+            if [ "$COUNT" -ge 3 ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for release assets"
+          gh release view "$TAG" --json assets || true
+          exit 1
+
+      - name: Sync website download buttons
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          chmod +x scripts/sync-website-downloads.sh
+          ./scripts/sync-website-downloads.sh "${{ needs.prepare.outputs.tag }}"
+
+      - name: Commit and push website updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add website/index.html
+          if git diff --staged --quiet; then
+            echo "No website changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: sync website downloads for ${{ needs.prepare.outputs.tag }}"
+          git push origin HEAD:main
