@@ -258,7 +258,10 @@ fn cancel_organize() {
 
 #[tauri::command]
 fn ocr_status() -> serde_json::Value {
-    serde_json::json!({ "available": ocr::is_available() })
+    serde_json::json!({
+        "available": ocr::is_available(),
+        "bundled": ocr::bundled_available(),
+    })
 }
 
 #[tauri::command]
@@ -525,6 +528,7 @@ pub fn run() {
                         }
                     }
                 }
+                ocr::warm_up();
                 match classify_embed::warm_up() {
                     Ok(()) => eprintln!("[tidy] hybrid embeddings ready"),
                     Err(e) => eprintln!("[tidy] hybrid embeddings unavailable: {e}"),

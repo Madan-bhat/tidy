@@ -33,6 +33,10 @@ thiserror = "2.0.21"
 zip = "9.4.0"
 pdf-extract = "0.12.1"
 rayon = "1.10"
+# Bundled OCR (models ship in resources/ocr/) — users do not install tesseract.
+ocrs = "0.13"
+rten = "0.26"
+image = "0.25"
 
 [profile.release]
 codegen-units = 1

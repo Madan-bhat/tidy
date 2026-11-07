@@ -4,9 +4,9 @@
   "version": "1.0.1",
   "identifier": "com.madanbhat.tidy",
   "build": {
-    "beforeDevCommand": "node scripts/build-embed-worker.mjs && npm run dev",
+    "beforeDevCommand": "node scripts/fetch-ocr-models.mjs && node scripts/build-embed-worker.mjs && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "node scripts/build-embed-worker.mjs && npm run build",
+    "beforeBuildCommand": "node scripts/fetch-ocr-models.mjs && node scripts/build-embed-worker.mjs && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -28,6 +28,9 @@
     "targets": "all",
     "externalBin": [
       "binaries/tidy-embed-worker"
+    ],
+    "resources": [
+      "resources/ocr/*"
     ],
     "icon": [
       "icons/32x32.png",

@@ -1345,13 +1345,11 @@ export default function App() {
               >
                 Suggest keywords
               </button>
-              {ocrAvailable === false && (
-                <span className="muted ocr-hint">
-                  OCR off — install tesseract to read screenshots &amp; scans
-                </span>
-              )}
               {ocrAvailable === true && (
-                <span className="muted ocr-hint">OCR ready</span>
+                <span className="muted ocr-hint">OCR included — reads screenshots &amp; scans</span>
+              )}
+              {ocrAvailable === false && (
+                <span className="muted ocr-hint">OCR models missing from this build</span>
               )}
             </div>
             {suggestions && suggestions.length > 0 && (
