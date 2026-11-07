@@ -44,6 +44,8 @@ export interface PreviewItem {
   reason?: string;
   /** "high" | "medium" | "low" | "none" */
   confidence?: string;
+  /** ready | review | unsorted */
+  bucket?: string;
 }
 
 export interface TypeRule {
@@ -81,4 +83,11 @@ export interface OrganizeProgress {
   current: number;
   total: number;
   filename: string;
+  etaSecs?: number | null;
+}
+
+export interface KeywordSuggestion {
+  subject: string;
+  keywords: string[];
+  fromFiles: number;
 }

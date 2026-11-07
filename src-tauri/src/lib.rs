@@ -1,15 +1,19 @@
+mod cancel;
 mod classify_embed;
 mod classify_subject;
 mod classify_type;
 mod config;
 pub mod eval;
 mod extract;
+mod folder_learn;
 mod history;
 mod import_parse;
 mod learned;
 mod mover;
+mod ocr;
 mod organize_existing;
 mod pending;
+mod related;
 mod stability;
 mod subjects;
 mod tray;
@@ -247,6 +251,76 @@ fn forget_learned(subject: Option<String>) {
     }
 }
 
+#[tauri::command]
+fn cancel_organize() {
+    cancel::request();
+}
+
+#[tauri::command]
+fn ocr_status() -> serde_json::Value {
+    serde_json::json!({ "available": ocr::is_available() })
+}
+
+#[tauri::command]
+async fn learn_from_existing_files() -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = config::load();
+        let dest = cfg
+            .destination_folder
+            .as_ref()
+            .ok_or_else(|| "Destination folder is not set".to_string())?;
+        let path = std::path::Path::new(dest);
+        if !path.is_dir() {
+            return Err("Destination folder does not exist".into());
+        }
+        Ok(folder_learn::learn_from_destination(path, &cfg.subjects))
+    })
+    .await
+    .map_err(|e| format!("Learn failed: {e}"))?
+}
+
+#[tauri::command]
+async fn suggest_keywords_from_folder() -> Result<Vec<folder_learn::SuggestResult>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = config::load();
+        let dest = cfg
+            .destination_folder
+            .as_ref()
+            .ok_or_else(|| "Destination folder is not set".to_string())?;
+        let path = std::path::Path::new(dest);
+        if !path.is_dir() {
+            return Err("Destination folder does not exist".into());
+        }
+        Ok(folder_learn::suggest_keywords(path, &cfg.subjects))
+    })
+    .await
+    .map_err(|e| format!("Suggest failed: {e}"))?
+}
+
+#[tauri::command]
+fn apply_suggested_keywords(
+    suggestions: Vec<folder_learn::SuggestResult>,
+) -> Result<AppConfig, String> {
+    let mut cfg = config::load();
+    for sug in suggestions {
+        if let Some(subject) = cfg.subjects.iter_mut().find(|s| s.name == sug.subject) {
+            for kw in sug.keywords {
+                if !subject
+                    .keywords
+                    .iter()
+                    .any(|e| e.eq_ignore_ascii_case(&kw))
+                {
+                    subject.keywords.push(kw);
+                }
+            }
+            classify_subject::enrich_subject(subject);
+        }
+    }
+    config::save(&cfg)?;
+    Ok(config::load())
+}
+
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TypeRuleDto {
@@ -420,6 +494,11 @@ pub fn run() {
             record_corrections,
             learned_counts,
             forget_learned,
+            cancel_organize,
+            ocr_status,
+            learn_from_existing_files,
+            suggest_keywords_from_folder,
+            apply_suggested_keywords,
             get_rules,
             set_subject_enabled,
             upsert_subject,
@@ -435,6 +514,17 @@ pub fn run() {
             // Prefetch MiniLM in a child process (first run may download ~23MB).
             // If ort aborts, only the worker dies — UI keeps BM25 ranking.
             std::thread::spawn(|| {
+                // Quietly harvest terms from already-filed folders (no-op if empty).
+                let cfg = config::load();
+                if let Some(dest) = cfg.destination_folder.as_ref() {
+                    let path = std::path::Path::new(dest);
+                    if path.is_dir() && learned::counts().is_empty() {
+                        let n = folder_learn::learn_from_destination(path, &cfg.subjects);
+                        if n > 0 {
+                            eprintln!("[tidy] learned {n} terms from existing folders");
+                        }
+                    }
+                }
                 match classify_embed::warm_up() {
                     Ok(()) => eprintln!("[tidy] hybrid embeddings ready"),
                     Err(e) => eprintln!("[tidy] hybrid embeddings unavailable: {e}"),

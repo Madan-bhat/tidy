@@ -2642,3 +2642,72 @@ input[type="radio"] {
   margin: 4px 0 0;
   font-size: 12px;
 }
+
+.progress-cancel {
+  margin-top: 12px;
+  align-self: center;
+}
+
+.preview-bucket {
+  margin-top: 10px;
+}
+
+.preview-bucket-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  padding: 4px 2px 6px;
+}
+
+.preview-bucket-head strong {
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.preview-bucket.review .preview-list {
+  border-color: #e8c48a;
+}
+
+.preview-bucket.unsorted .preview-list {
+  border-color: var(--line);
+  opacity: 0.95;
+}
+
+.subject-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 14px;
+}
+
+.ocr-hint {
+  font-size: 12px;
+}
+
+.suggest-panel {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--stone-0);
+}
+
+.suggest-panel ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.suggest-panel li {
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.suggest-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}

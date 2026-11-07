@@ -9,15 +9,17 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-/// Formats we can pull subject-matching text from.
+/// Formats we can pull subject-matching text from (including OCR for images).
 pub fn can_extract(path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase()
-            .as_str(),
+        ext.as_str(),
         "txt" | "md" | "tex" | "csv" | "pdf" | "docx" | "pptx"
+            | "png" | "jpg" | "jpeg" | "webp" | "tif" | "tiff" | "bmp" | "gif"
     )
 }
 
@@ -52,9 +54,12 @@ fn extract_text_uncached(path: &Path) -> Option<String> {
 
     match ext.as_str() {
         "txt" | "md" | "tex" | "csv" => extract_txt(path),
-        "pdf" => extract_pdf_timed(path, Duration::from_millis(4000)),
+        "pdf" => extract_pdf_smart(path),
         "docx" => extract_docx(path),
         "pptx" => extract_pptx(path),
+        "png" | "jpg" | "jpeg" | "webp" | "tif" | "tiff" | "bmp" | "gif" => {
+            crate::ocr::ocr_image(path)
+        }
         _ => None,
     }
 }
@@ -68,11 +73,34 @@ fn extract_txt(path: &Path) -> Option<String> {
     Some(text.chars().take(8000).collect())
 }
 
+/// Prefer the start of the PDF (title / abstract) and fall back to OCR when the
+/// file looks like a scan (almost no selectable text).
+fn extract_pdf_smart(path: &Path) -> Option<String> {
+    let text = extract_pdf_timed(path, Duration::from_millis(4000));
+    let useful = text
+        .as_ref()
+        .map(|t| t.chars().filter(|c| c.is_alphanumeric()).count())
+        .unwrap_or(0);
+
+    if useful >= 40 {
+        // Keep the head of the document — titles and abstracts sit there and
+        // are more subject-specific than the middle of a long body.
+        return text.map(|t| {
+            let head: String = t.chars().take(2500).collect();
+            head
+        });
+    }
+
+    // Likely a scanned PDF — try OCR on the first page.
+    if let Some(ocr) = crate::ocr::ocr_pdf_first_page(path) {
+        return Some(ocr);
+    }
+    text.filter(|t| !t.trim().is_empty())
+}
+
 /// Run PDF parse on a helper thread and abandon it after `limit`.
-/// A hung parser must not block bulk matching forever.
 fn extract_pdf_timed(path: &Path, limit: Duration) -> Option<String> {
     let meta = fs::metadata(path).ok()?;
-    // Smaller cap for responsiveness during bulk scans.
     if meta.len() > 12_000_000 {
         return None;
     }
@@ -89,10 +117,7 @@ fn extract_pdf_timed(path: &Path, limit: Duration) -> Option<String> {
 
     match rx.recv_timeout(limit) {
         Ok(text) => text,
-        Err(_) => {
-            // Thread may still be running; we move on so matching can finish.
-            None
-        }
+        Err(_) => None,
     }
 }
 
@@ -114,7 +139,6 @@ fn strip_xml(xml: &str, out: &mut String, limit: usize) {
         match ch {
             '<' => {
                 in_tag = true;
-                // Keep word boundaries between runs/paragraphs.
                 if !out.ends_with(' ') {
                     out.push(' ');
                 }
@@ -141,7 +165,6 @@ fn extract_docx(path: &Path) -> Option<String> {
     Some(text)
 }
 
-/// PowerPoint (.pptx): text of the first slides (titles / outline carry the subject).
 fn extract_pptx(path: &Path) -> Option<String> {
     let file = fs::File::open(path).ok()?;
     let mut archive = zip::ZipArchive::new(file).ok()?;

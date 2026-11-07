@@ -9,6 +9,7 @@ import type {
   MonitorStatus,
   MoveRecord,
   OrganizeProgress,
+  KeywordSuggestion,
   PreviewItem,
   ProposedSubject,
   RulesDto,
@@ -138,7 +139,17 @@ function splitKeywords(text: string): string[] {
 
 /** Unsure matches start unticked so nothing questionable moves by accident. */
 function defaultSelection(items: PreviewItem[]): Set<string> {
-  return new Set(items.filter((i) => i.confidence !== "low").map((i) => i.source));
+  return new Set(
+    items
+      .filter((i) => (i.bucket ?? (i.confidence === "low" || i.subject === "General" ? (i.subject === "General" ? "unsorted" : "review") : "ready")) === "ready")
+      .map((i) => i.source),
+  );
+}
+
+function formatEta(secs?: number | null): string {
+  if (secs == null || secs <= 0) return "";
+  if (secs < 60) return `~${secs}s left`;
+  return `~${Math.ceil(secs / 60)}m left`;
 }
 
 export default function App() {
@@ -159,6 +170,8 @@ export default function App() {
   /** Subjects the user picked in the preview instead of Tidy's suggestion. */
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [learnedCounts, setLearnedCounts] = useState<Record<string, number>>({});
+  const [ocrAvailable, setOcrAvailable] = useState<boolean | null>(null);
+  const [suggestions, setSuggestions] = useState<KeywordSuggestion[] | null>(null);
   const [canRevert, setCanRevert] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftKeywords, setDraftKeywords] = useState("");
@@ -444,7 +457,9 @@ export default function App() {
       setPreview(items);
       setSelected(defaultSelection(items));
     } catch (e) {
-      setError(errText(e));
+      const msg = errText(e);
+      if (/cancelled/i.test(msg)) setNotice("Scan cancelled");
+      else setError(msg);
     } finally {
       setBusy(false);
       setProgress(null);
@@ -461,7 +476,9 @@ export default function App() {
       setPreview(items);
       setSelected(defaultSelection(items));
     } catch (e) {
-      setError(errText(e));
+      const msg = errText(e);
+      if (/cancelled/i.test(msg)) setNotice("Scan cancelled");
+      else setError(msg);
     } finally {
       setBusy(false);
       setProgress(null);
@@ -516,7 +533,58 @@ export default function App() {
 
   useEffect(() => {
     void refreshLearned();
+    invoke<{ available: boolean }>("ocr_status")
+      .then((s) => setOcrAvailable(s.available))
+      .catch(() => setOcrAvailable(false));
   }, [refreshLearned, tab, preview]);
+
+  async function learnFromFolders() {
+    setBusy(true);
+    setError(null);
+    try {
+      const n = await invoke<number>("learn_from_existing_files");
+      await refreshLearned();
+      setNotice(
+        n > 0
+          ? `Learned ${plural(n, "term")} from files already in your destination`
+          : "No new terms found in your destination",
+      );
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function suggestFromFolders() {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await invoke<KeywordSuggestion[]>("suggest_keywords_from_folder");
+      setSuggestions(next);
+      if (!next.length) setNotice("No keyword suggestions from your destination yet");
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applySuggestions() {
+    if (!suggestions?.length) return;
+    setBusy(true);
+    try {
+      const cfg = await invoke<AppConfig>("apply_suggested_keywords", { suggestions });
+      setConfig(cfg);
+      await refresh();
+      setSuggestions(null);
+      setNotice("Added suggested keywords to your subjects");
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function forgetLearned(subject: string) {
     await invoke("forget_learned", { subject });
@@ -705,9 +773,8 @@ export default function App() {
     return {
       subjects: new Set(picked.map((p) => p.subject)).size,
       unsure: preview.filter((p) => (overrides[p.source] ?? p.subject) === "General").length,
-      review: preview.filter(
-        (p) => p.confidence === "low" && (overrides[p.source] ?? p.subject) !== "General",
-      ).length,
+      review: preview.filter((p) => (p.bucket ?? "") === "review" || p.confidence === "low").length,
+      ready: preview.filter((p) => (p.bucket ?? "") === "ready").length,
     };
   }, [preview, selected, overrides]);
 
@@ -1259,6 +1326,67 @@ export default function App() {
               </div>
             </div>
 
+            <div className="subject-tools">
+              <button
+                type="button"
+                className="secondary"
+                disabled={busy || !config?.destinationFolder}
+                onClick={() => void learnFromFolders()}
+                title="Harvest distinctive words from files already in each subject folder"
+              >
+                Learn from existing files
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={busy || !config?.destinationFolder}
+                onClick={() => void suggestFromFolders()}
+                title="Propose keywords from filenames already in each subject folder"
+              >
+                Suggest keywords
+              </button>
+              {ocrAvailable === false && (
+                <span className="muted ocr-hint">
+                  OCR off — install tesseract to read screenshots &amp; scans
+                </span>
+              )}
+              {ocrAvailable === true && (
+                <span className="muted ocr-hint">OCR ready</span>
+              )}
+            </div>
+            {suggestions && suggestions.length > 0 && (
+              <div className="suggest-panel">
+                <div className="suggest-head">
+                  <strong>Suggested keywords</strong>
+                  <span className="muted">From files already in {destName}</span>
+                </div>
+                <ul>
+                  {suggestions.map((s) => (
+                    <li key={s.subject}>
+                      <strong>{s.subject}</strong>
+                      <span className="muted">
+                        {" "}
+                        · {plural(s.fromFiles, "file")} · {s.keywords.slice(0, 8).join(" · ")}
+                        {s.keywords.length > 8 ? "…" : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="btn-row">
+                  <button type="button" className="text-btn" onClick={() => setSuggestions(null)}>
+                    Dismiss
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-toggle start small"
+                    disabled={busy}
+                    onClick={() => void applySuggestions()}
+                  >
+                    Add to subjects
+                  </button>
+                </div>
+              </div>
+            )}
             <ul className="subject-list">
               {visibleSubjects.length === 0 && subjectFilter && (
                 <li className="subject-empty muted">No subjects match &ldquo;{subjectFilter}&rdquo;.</li>
@@ -1550,6 +1678,7 @@ export default function App() {
               </h2>
               <span className="progress-count">
                 {progress.total > 0 ? `${progress.current} / ${progress.total}` : "Starting…"}
+                {formatEta(progress.etaSecs) ? ` · ${formatEta(progress.etaSecs)}` : ""}
               </span>
             </div>
             {progress.filename && (
@@ -1575,9 +1704,18 @@ export default function App() {
               {progress.phase === "moving"
                 ? "Moving files into place. Existing files are never overwritten."
                 : progress.phase === "reading"
-                  ? "Pulling text from PDFs/DOCX when the filename alone is unclear."
+                  ? "Reading PDFs, Office files, and images (OCR when available) for weak matches."
                   : "Matching filenames to your subjects…"}
             </p>
+            <button
+              type="button"
+              className="secondary progress-cancel"
+              onClick={() => {
+                void invoke("cancel_organize");
+              }}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
@@ -1666,85 +1804,141 @@ export default function App() {
                         {selected.size} of {preview.length} selected
                       </span>
                     </div>
-                    <ul className="preview-list">
-                      {preview.map((item) => {
-                        const subject = overrides[item.source] ?? item.subject;
-                        const changed = subject !== item.subject;
-                        const level = changed ? "high" : (item.confidence ?? "none");
-                        const options = Array.from(
-                          new Set([
-                            ...(config?.subjects.filter((c) => c.enabled).map((c) => c.name) ?? []),
-                            "General",
-                            subject,
-                          ]),
-                        );
-                        return (
-                          <li
-                            key={item.source}
-                            className={
-                              subject === "General" ? "unsure" : level === "low" ? "low" : ""
-                            }
-                          >
-                            <label>
-                              <input
-                                type="checkbox"
-                                checked={selected.has(item.source)}
-                                onChange={(e) => {
+                    {(["ready", "review", "unsorted"] as const).map((bucket) => {
+                      const rows = preview.filter((item) => {
+                        const b =
+                          item.bucket ??
+                          (item.subject === "General"
+                            ? "unsorted"
+                            : item.confidence === "low"
+                              ? "review"
+                              : "ready");
+                        return b === bucket;
+                      });
+                      if (rows.length === 0) return null;
+                      const title =
+                        bucket === "ready"
+                          ? "Ready"
+                          : bucket === "review"
+                            ? "Review"
+                            : "Unsorted";
+                      const hint =
+                        bucket === "ready"
+                          ? "Clear matches — selected by default"
+                          : bucket === "review"
+                            ? "Unsure — check or pick a subject"
+                            : "No clear subject — goes to General unless you pick one";
+                      return (
+                        <div key={bucket} className={`preview-bucket ${bucket}`}>
+                          <div className="preview-bucket-head">
+                            <strong>{title}</strong>
+                            <span className="muted">
+                              {plural(rows.length, "file")} · {hint}
+                            </span>
+                            {bucket !== "ready" && (
+                              <button
+                                type="button"
+                                className="text-btn"
+                                onClick={() =>
                                   setSelected((prev) => {
                                     const next = new Set(prev);
-                                    if (e.target.checked) next.add(item.source);
-                                    else next.delete(item.source);
+                                    for (const r of rows) next.add(r.source);
                                     return next;
-                                  });
-                                }}
-                              />
-                              <span className="preview-item">
-                                <strong title={item.filename}>{item.filename}</strong>
-                                <span className="route-tag">
-                                  {item.fromSubject != null && (
-                                    <>
-                                      {item.fromSubject}
-                                      {item.fromFileType ? `/${item.fromFileType}` : ""}
-                                      <i> → </i>
-                                    </>
-                                  )}
-                                  <select
-                                    className="subject-pick"
-                                    value={subject}
-                                    aria-label={`Subject for ${item.filename}`}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onChange={(e) => {
-                                      const next = e.target.value;
-                                      setOverrides((prev) => {
-                                        const copy = { ...prev };
-                                        if (next === item.subject) delete copy[item.source];
-                                        else copy[item.source] = next;
-                                        return copy;
-                                      });
-                                      setSelected((prev) => new Set(prev).add(item.source));
-                                    }}
-                                  >
-                                    {options.map((name) => (
-                                      <option key={name} value={name}>
-                                        {name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  /{item.fileType}/
-                                </span>
-                                <span className={`why ${level}`}>
-                                  {changed
-                                    ? "Your choice — Tidy will remember this"
-                                    : item.reason
-                                      ? `${level === "low" ? "Unsure · " : ""}${item.reason}`
-                                      : ""}
-                                </span>
-                              </span>
-                            </label>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                                  })
+                                }
+                              >
+                                Select all
+                              </button>
+                            )}
+                          </div>
+                          <ul className="preview-list">
+                            {rows.map((item) => {
+                              const subject = overrides[item.source] ?? item.subject;
+                              const changed = subject !== item.subject;
+                              const level = changed ? "high" : (item.confidence ?? "none");
+                              const options = Array.from(
+                                new Set([
+                                  ...(config?.subjects
+                                    .filter((c) => c.enabled)
+                                    .map((c) => c.name) ?? []),
+                                  "General",
+                                  subject,
+                                ]),
+                              );
+                              return (
+                                <li
+                                  key={item.source}
+                                  className={
+                                    subject === "General"
+                                      ? "unsure"
+                                      : level === "low"
+                                        ? "low"
+                                        : ""
+                                  }
+                                >
+                                  <label>
+                                    <input
+                                      type="checkbox"
+                                      checked={selected.has(item.source)}
+                                      onChange={(e) => {
+                                        setSelected((prev) => {
+                                          const next = new Set(prev);
+                                          if (e.target.checked) next.add(item.source);
+                                          else next.delete(item.source);
+                                          return next;
+                                        });
+                                      }}
+                                    />
+                                    <span className="preview-item">
+                                      <strong title={item.filename}>{item.filename}</strong>
+                                      <span className="route-tag">
+                                        {item.fromSubject != null && (
+                                          <>
+                                            {item.fromSubject}
+                                            {item.fromFileType ? `/${item.fromFileType}` : ""}
+                                            <i> → </i>
+                                          </>
+                                        )}
+                                        <select
+                                          className="subject-pick"
+                                          value={subject}
+                                          aria-label={`Subject for ${item.filename}`}
+                                          onClick={(e) => e.stopPropagation()}
+                                          onChange={(e) => {
+                                            const next = e.target.value;
+                                            setOverrides((prev) => {
+                                              const copy = { ...prev };
+                                              if (next === item.subject) delete copy[item.source];
+                                              else copy[item.source] = next;
+                                              return copy;
+                                            });
+                                            setSelected((prev) => new Set(prev).add(item.source));
+                                          }}
+                                        >
+                                          {options.map((name) => (
+                                            <option key={name} value={name}>
+                                              {name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        /{item.fileType}/
+                                      </span>
+                                      <span className={`why ${level}`}>
+                                        {changed
+                                          ? "Your choice — Tidy will remember this"
+                                          : item.reason
+                                            ? `${level === "low" ? "Unsure · " : ""}${item.reason}`
+                                            : ""}
+                                      </span>
+                                    </span>
+                                  </label>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      );
+                    })}
                   </div>
                   <div className="preview-tree-pane">
                     <p className="eyebrow">

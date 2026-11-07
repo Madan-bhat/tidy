@@ -246,6 +246,15 @@ fn process_new_file(app: &AppHandle, path: &Path) {
     // Never auto-move: propose and wait for user confirmation.
     match mover::plan_move_opts(path, &cfg, true, true) {
         Ok(planned) => {
+            let bucket = if planned.subject.eq_ignore_ascii_case("General")
+                || planned.confidence == "none"
+            {
+                "unsorted".into()
+            } else if planned.confidence == "low" {
+                "review".into()
+            } else {
+                "ready".into()
+            };
             crate::pending::upsert(crate::organize_existing::PreviewItem {
                 source: planned.source.to_string_lossy().to_string(),
                 destination: planned.destination.to_string_lossy().to_string(),
@@ -256,6 +265,7 @@ fn process_new_file(app: &AppHandle, path: &Path) {
                 from_file_type: None,
                 reason: planned.reason,
                 confidence: planned.confidence,
+                bucket,
             });
             let _ = app.emit("organize-pending", crate::pending::list());
         }
